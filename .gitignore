@@ -1,0 +1,8 @@
+node_modules
+.output
+dist
+.env
+.env.local
+*.log
+coverage
+src/routeTree.gen.ts

@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f5f3ee;
+  --color-ink: #0a0a0a;
+  --color-accent: #b91c1c;
+  --color-muted: #78716c;
+  --font-sora: "Sora", sans-serif;
+  --font-manrope: "Manrope", sans-serif;
+}
+
+body {
+  background-color: #f5f3ee;
+  color: #0a0a0a;
+  font-family: "Manrope", system-ui, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Sora", system-ui, sans-serif;
+}
