@@ -74,7 +74,7 @@ function parsePipeBody(text: string, entryDate: string): ViciDialStatsRow[] {
       agent_id: agent_id.trim(),
       agent_name: agent_name.trim(),
       user_group: user_group.trim(),
-      entry_date,
+      entry_date: entryDate,
       talk_time_secs: parseTimeToSeconds(talk_time),
       wait_time_secs: parseTimeToSeconds(wait_time),
       pause_time_secs: parseTimeToSeconds(pause_time),

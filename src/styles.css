@@ -1,10 +1,12 @@
 @import "tailwindcss";
 
 @theme {
-  --color-paper: #f5f3ee;
+  --color-paper: #f4f2ee;
   --color-ink: #0a0a0a;
-  --color-accent: #b91c1c;
+  --color-accent: #d93025;
   --color-muted: #78716c;
+  --color-card: #ffffff;
+  --color-dark: #0f0f0f;
   --font-sora: "Sora", sans-serif;
   --font-manrope: "Manrope", sans-serif;
 }

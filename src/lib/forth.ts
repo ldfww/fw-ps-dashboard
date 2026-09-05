@@ -2,15 +2,17 @@ import { format, isBefore, isValid, isWithinInterval, parseISO } from 'date-fns'
 
 const FORTH_BASE = 'https://api.forthcrm.com/v1'
 const PAGE_LIMIT = 500
-const REQUEST_TIMEOUT_MS = 8000
-const DEADLINE_MS = 50000
-const BATCH_SIZE = 5
+const REQUEST_TIMEOUT_MS = 120000
+const DEADLINE_MS = 600000
+const BATCH_SIZE = 2
 
 export interface ForthUser {
   id: string
   firstname: string
   lastname: string
   user_name?: string
+  role_name?: string
+  active: boolean
 }
 
 export interface ForthTask {
@@ -33,6 +35,7 @@ export interface ForthReportRow {
   userId: string
   firstname?: string
   lastname?: string
+  open: number
   overdue: number
   done: number
 }
@@ -60,6 +63,7 @@ function extractArray(response: unknown): unknown[] {
   if (Array.isArray(response)) return response
   if (response && typeof response === 'object') {
     const obj = response as Record<string, unknown>
+    if (Array.isArray(obj.response)) return obj.response
     if (Array.isArray(obj.users)) return obj.users
     if (Array.isArray(obj.data)) return obj.data
     if (Array.isArray(obj.items)) return obj.items
@@ -139,12 +143,17 @@ export async function fetchForthUsers(
   const parsed = parseJsonBody(res.body)
   const rows = extractArray(parsed)
     .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
-    .map((r) => ({
-      id: String(r.id ?? ''),
-      firstname: r.firstname ? String(r.firstname) : '',
-      lastname: r.lastname ? String(r.lastname) : '',
-      user_name: r.user_name ? String(r.user_name) : undefined,
-    }))
+    .map((r) => {
+      const role = r.role && typeof r.role === 'object' ? r.role as Record<string, unknown> : null
+      return {
+        id: String(r.id ?? ''),
+        firstname: r.firstname ? String(r.firstname) : '',
+        lastname: r.lastname ? String(r.lastname) : '',
+        user_name: r.username ? String(r.username) : r.user_name ? String(r.user_name) : undefined,
+        role_name: role?.name ? String(role.name) : undefined,
+        active: r.active !== false,
+      }
+    })
     .filter((u) => u.id)
   const byId = new Map<string, ForthUser>()
   for (const u of rows) byId.set(u.id, u)
@@ -166,16 +175,22 @@ async function fetchTasksPage(
   baseUrl: string,
   signal: AbortSignal,
 ): Promise<{ tasks: ForthTask[]; status: number }> {
+  const body = new URLSearchParams({
+    completed: String(completed),
+    start: String(start),
+    limit: String(PAGE_LIMIT),
+  }).toString()
+
   const res = await safeFetch(
     `${baseUrl}/users/${encodeURIComponent(userId)}/tasks`,
     {
       method: 'POST',
       headers: {
         'Api-Key': apiKey,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ completed, start, limit: PAGE_LIMIT }),
+      body,
     },
     signal,
   )
@@ -329,7 +344,7 @@ export function computeForthReport(
   for (const t of tasks) {
     let row = byUser.get(t.userId)
     if (!row) {
-      row = { userId: t.userId, firstname: t.firstname, lastname: t.lastname, overdue: 0, done: 0 }
+      row = { userId: t.userId, firstname: t.firstname, lastname: t.lastname, open: 0, overdue: 0, done: 0 }
       byUser.set(t.userId, row)
     }
 
@@ -337,13 +352,14 @@ export function computeForthReport(
     const completed = t.task_completed_date ? parseISO(t.task_completed_date) : null
     const asOfDate = parseISO(asOf)
 
-    if (
-      !t.task_completed &&
-      due &&
-      isValid(due) &&
-      isBefore(due, asOfDate)
-    ) {
-      row.overdue++
+    const completedAsOf = t.task_completed && completed && isValid(completed) && !isBefore(asOfDate, completed)
+
+    if (!completedAsOf) {
+      if (due && isValid(due) && isBefore(due, asOfDate)) {
+        row.overdue++
+      } else {
+        row.open++
+      }
     }
 
     if (

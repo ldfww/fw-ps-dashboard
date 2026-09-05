@@ -1,6 +1,25 @@
-create type public.app_role as enum ('admin', 'manager', 'agent');
+do $$
+begin
+    if not exists (select 1 from pg_type where typname = 'app_role') then
+        create type public.app_role as enum ('admin', 'manager', 'agent');
+    end if;
+end$$;
 
-create table public.profiles (
+create or replace function public.has_role(user_id uuid, required_role public.app_role)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    return exists (
+        select 1 from public.user_roles
+        where id = user_id and role = required_role
+    );
+end;
+$$;
+
+create table if not exists public.profiles (
     id uuid primary key references auth.users on delete cascade,
     email text not null,
     full_name text,
@@ -8,25 +27,34 @@ create table public.profiles (
     created_at timestamptz default now()
 );
 
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists full_name text;
+alter table public.profiles add column if not exists active boolean default true;
+alter table public.profiles add column if not exists created_at timestamptz default now();
+update public.profiles p set email = u.email from auth.users u where p.id = u.id and p.email is null;
+
 alter table public.profiles enable row level security;
 
 grant select, insert, update on public.profiles to authenticated;
 grant all on public.profiles to service_role;
 
+drop policy if exists "Users can read own profile" on public.profiles;
 create policy "Users can read own profile"
     on public.profiles for select
     using (auth.uid() = id);
 
+drop policy if exists "Managers can read all profiles" on public.profiles;
 create policy "Managers can read all profiles"
     on public.profiles for select
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Admins can manage all profiles" on public.profiles;
 create policy "Admins can manage all profiles"
     on public.profiles for all
-    using (public.has_role(auth.uid(), 'admin'));
+    using (public.has_role(auth.uid(), 'admin'::app_role));
 
 -- Roles stored separately; never on profiles
-create table public.user_roles (
+create table if not exists public.user_roles (
     id uuid primary key references auth.users on delete cascade,
     role public.app_role not null default 'agent',
     updated_at timestamptz default now()
@@ -37,17 +65,20 @@ alter table public.user_roles enable row level security;
 grant select, insert, update, delete on public.user_roles to authenticated;
 grant all on public.user_roles to service_role;
 
+drop policy if exists "Users can read own role" on public.user_roles;
 create policy "Users can read own role"
     on public.user_roles for select
     using (auth.uid() = id);
 
+drop policy if exists "Managers can read roles" on public.user_roles;
 create policy "Managers can read roles"
     on public.user_roles for select
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Admins can manage roles" on public.user_roles;
 create policy "Admins can manage roles"
     on public.user_roles for all
-    using (public.has_role(auth.uid(), 'admin'));
+    using (public.has_role(auth.uid(), 'admin'::app_role));
 
 -- SECURITY DEFINER helper
 create or replace function public.has_role(user_id uuid, required_role app_role)
@@ -82,13 +113,14 @@ begin
 end;
 $$;
 
+drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
     after insert on auth.users
     for each row
     execute function public.grant_first_user_manager();
 
 -- ViciDial agent time entries
-create table public.agent_time_entries (
+create table if not exists public.agent_time_entries (
     id bigserial primary key,
     agent_id text not null,
     agent_name text,
@@ -107,16 +139,40 @@ alter table public.agent_time_entries enable row level security;
 grant select, insert, update, delete on public.agent_time_entries to authenticated;
 grant all on public.agent_time_entries to service_role;
 
+drop policy if exists "Managers can manage agent_time_entries" on public.agent_time_entries;
 create policy "Managers can manage agent_time_entries"
     on public.agent_time_entries for all
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Agents can read own agent_time_entries" on public.agent_time_entries;
 create policy "Agents can read own agent_time_entries"
     on public.agent_time_entries for select
-    using (public.has_role(auth.uid(), 'agent') and agent_id = (select email from public.profiles where id = auth.uid()));
+    using (public.has_role(auth.uid(), 'agent'::app_role) and agent_id = (select email from public.profiles where id = auth.uid()));
+
+-- ForthCRM users
+create table if not exists public.forth_users (
+    id text primary key,
+    firstname text,
+    lastname text,
+    user_name text,
+    role_name text,
+    active boolean default true,
+    updated_at timestamptz default now()
+);
+
+alter table public.forth_users add column if not exists role_name text;
+alter table public.forth_users add column if not exists active boolean default true;
+alter table public.forth_users enable row level security;
+grant select, insert, update, delete on public.forth_users to authenticated;
+grant all on public.forth_users to service_role;
+
+drop policy if exists "Managers can read all forth_users" on public.forth_users;
+create policy "Managers can read all forth_users"
+    on public.forth_users for all
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
 -- ForthCRM tasks
-create table public.forth_tasks (
+create table if not exists public.forth_tasks (
     id text primary key,
     contact_id text,
     user_id text not null,
@@ -139,16 +195,18 @@ alter table public.forth_tasks enable row level security;
 grant select, insert, update, delete on public.forth_tasks to authenticated;
 grant all on public.forth_tasks to service_role;
 
+drop policy if exists "Managers can read all forth_tasks" on public.forth_tasks;
 create policy "Managers can read all forth_tasks"
     on public.forth_tasks for all
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Agents can read own forth_tasks" on public.forth_tasks;
 create policy "Agents can read own forth_tasks"
     on public.forth_tasks for select
-    using (public.has_role(auth.uid(), 'agent') and user_id = (select email from public.profiles where id = auth.uid()));
+    using (public.has_role(auth.uid(), 'agent'::app_role) and user_id = (select email from public.profiles where id = auth.uid()));
 
 -- Gmail counts
-create table public.email_counts (
+create table if not exists public.email_counts (
     id bigserial primary key,
     mailbox text not null,
     counted_date date not null,
@@ -164,16 +222,18 @@ alter table public.email_counts enable row level security;
 grant select, insert, update, delete on public.email_counts to authenticated;
 grant all on public.email_counts to service_role;
 
+drop policy if exists "Managers can manage email_counts" on public.email_counts;
 create policy "Managers can manage email_counts"
     on public.email_counts for all
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Agents can read email_counts" on public.email_counts;
 create policy "Agents can read email_counts"
     on public.email_counts for select
-    using (public.has_role(auth.uid(), 'agent'));
+    using (public.has_role(auth.uid(), 'agent'::app_role));
 
 -- Supervisor spreadsheet log
-create table public.sheet_tasks (
+create table if not exists public.sheet_tasks (
     id bigserial primary key,
     agent_id text not null,
     log_date date not null,
@@ -187,16 +247,18 @@ alter table public.sheet_tasks enable row level security;
 grant select, insert, update, delete on public.sheet_tasks to authenticated;
 grant all on public.sheet_tasks to service_role;
 
+drop policy if exists "Managers can manage sheet_tasks" on public.sheet_tasks;
 create policy "Managers can manage sheet_tasks"
     on public.sheet_tasks for all
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Agents can read own sheet_tasks" on public.sheet_tasks;
 create policy "Agents can read own sheet_tasks"
     on public.sheet_tasks for select
-    using (public.has_role(auth.uid(), 'agent') and agent_id = (select email from public.profiles where id = auth.uid()));
+    using (public.has_role(auth.uid(), 'agent'::app_role) and agent_id = (select email from public.profiles where id = auth.uid()));
 
 -- Nightly snapshots for trends
-create table public.report_snapshots (
+create table if not exists public.report_snapshots (
     id bigserial primary key,
     snapshot_date date not null,
     source text not null,
@@ -212,16 +274,18 @@ alter table public.report_snapshots enable row level security;
 grant select, insert, update, delete on public.report_snapshots to authenticated;
 grant all on public.report_snapshots to service_role;
 
+drop policy if exists "Managers can manage report_snapshots" on public.report_snapshots;
 create policy "Managers can manage report_snapshots"
     on public.report_snapshots for all
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Agents can read own report_snapshots" on public.report_snapshots;
 create policy "Agents can read own report_snapshots"
     on public.report_snapshots for select
-    using (public.has_role(auth.uid(), 'agent') and agent_id = (select email from public.profiles where id = auth.uid()));
+    using (public.has_role(auth.uid(), 'agent'::app_role) and agent_id = (select email from public.profiles where id = auth.uid()));
 
 -- Threshold alerts
-create table public.threshold_alerts (
+create table if not exists public.threshold_alerts (
     id bigserial primary key,
     agent_id text not null,
     source text not null,
@@ -236,10 +300,12 @@ alter table public.threshold_alerts enable row level security;
 grant select, insert, update, delete on public.threshold_alerts to authenticated;
 grant all on public.threshold_alerts to service_role;
 
+drop policy if exists "Managers can manage threshold_alerts" on public.threshold_alerts;
 create policy "Managers can manage threshold_alerts"
     on public.threshold_alerts for all
-    using (public.has_role(auth.uid(), 'manager'));
+    using (public.has_role(auth.uid(), 'manager'::app_role));
 
+drop policy if exists "Agents can read own threshold_alerts" on public.threshold_alerts;
 create policy "Agents can read own threshold_alerts"
     on public.threshold_alerts for select
-    using (public.has_role(auth.uid(), 'agent') and agent_id = (select email from public.profiles where id = auth.uid()));
+    using (public.has_role(auth.uid(), 'agent'::app_role) and agent_id = (select email from public.profiles where id = auth.uid()));

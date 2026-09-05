@@ -35,3 +35,11 @@ Forth's Cloudflare WAF blocks unknown datacenter egress ranges. Before the live 
 - `npm run build` must pass
 - `npx vitest run` must pass (10 ForthCRM tests currently)
 - `npm start` should render the login page at `http://localhost:3000`
+
+## Current Handoff
+- Overview, Dialer, CRM, and Gmail reporting are connected; the latest build and all 10 tests pass.
+- Pending: connect and redesign the Supervisor Spreadsheet page, then connect its metrics to Overview.
+- The Sheets reader currently expects the tab `Sheet1`, with headers `agent`, `date`, and `tasks_assigned`; dates should use `YYYY-MM-DD`.
+- Enable the Google Sheets API, create a read-only service account, share the spreadsheet with its client email, and configure the three Google Sheets environment variables above locally. Never commit the service-account private key.
+- After configuration, verify the live Spreadsheet page, run the sync, confirm `sheet_tasks`/snapshot persistence, and rerun the build and tests.
+- Campaign filtering remains unavailable because the current ViciDial response does not include campaign-level fields.

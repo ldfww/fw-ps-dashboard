@@ -6,6 +6,7 @@ import {
   Outlet,
   redirect,
   Scripts,
+  useLocation,
   useRouter,
 } from '@tanstack/react-router'
 import { getSession } from '~/lib/auth-server'
@@ -53,9 +54,18 @@ export const Route = createRootRoute({
   component: RootComponent,
 })
 
+const navLinks = [
+  { to: '/', label: 'OVERVIEW' },
+  { to: '/dialer', label: 'DIALER' },
+  { to: '/crm', label: 'CRM' },
+  { to: '/email', label: 'EMAIL' },
+  { to: '/spreadsheet', label: 'SPREADSHEET' },
+]
+
 function RootComponent() {
   const session = Route.useLoaderData()
   const router = useRouter()
+  const location = useLocation()
 
   async function signOut() {
     const { getSupabaseClient } = await import('~/lib/auth')
@@ -66,34 +76,54 @@ function RootComponent() {
   return (
     <RootDocument>
       {session ? (
-        <nav className="border-b border-ink/10 bg-paper px-6 py-4">
-          <div className="mx-auto flex max-w-7xl items-center justify-between">
-            <Link to="/" className="font-sora text-lg font-semibold text-ink">
-              FinWarranty Ops
-            </Link>
-            <div className="flex items-center gap-6 font-manrope text-sm">
-              <Link to="/" className="hover:text-accent">Overview</Link>
-              <Link to="/dialer" className="hover:text-accent">Dialer</Link>
-              <Link to="/crm" className="hover:text-accent">CRM</Link>
-              <Link to="/email" className="hover:text-accent">Email</Link>
-              <Link to="/spreadsheet" className="hover:text-accent">Sheet</Link>
-              {(session.role === 'manager' || session.role === 'admin') && (
-                <>
-                  <Link to="/alerts" className="text-accent hover:text-ink">Alerts</Link>
-                  <Link to="/users" className="text-accent hover:text-ink">Users</Link>
-                </>
-              )}
-              <span className="hidden text-muted sm:inline">{session.email}</span>
-              <button
-                type="button"
-                onClick={signOut}
-                className="text-ink hover:text-accent"
-              >
-                Sign out
-              </button>
+        <header className="bg-paper px-6 pt-4 font-manrope">
+          <div className="mx-auto flex max-w-7xl items-start justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-dark text-paper font-sora text-sm font-semibold">
+                FW
+              </div>
+              <div>
+                <h1 className="font-sora text-sm font-bold tracking-wide text-ink">
+                  FINANCIAL WARRANTY
+                </h1>
+                <p className="text-xs text-muted">
+                  {location.pathname === '/' ? 'Overview — summary across every source' : 'Internal operations dashboard'}
+                </p>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={signOut}
+              className="rounded-full border border-ink/10 bg-card px-4 py-1.5 text-xs font-semibold text-ink hover:bg-ink/5"
+            >
+              SIGN OUT
+            </button>
           </div>
-        </nav>
+
+          <nav className="mx-auto mt-4 flex max-w-7xl gap-6 border-b border-ink/10 text-xs font-semibold tracking-wide text-muted">
+            {navLinks.map((link) => (
+              <Link
+                key={link.to}
+                to={link.to}
+                activeOptions={{ exact: true }}
+                activeProps={{ className: 'pb-3 border-b-2 border-ink text-ink' }}
+                className="pb-3 hover:text-ink"
+              >
+                {link.label}
+              </Link>
+            ))}
+            {(session.role === 'manager' || session.role === 'admin') && (
+              <>
+                <Link to="/alerts" className="pb-3 text-accent hover:text-ink">
+                  ALERTS
+                </Link>
+                <Link to="/users" className="pb-3 text-accent hover:text-ink">
+                  USERS
+                </Link>
+              </>
+            )}
+          </nav>
+        </header>
       ) : null}
       <main className="mx-auto max-w-7xl p-6">
         <Outlet />

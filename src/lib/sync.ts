@@ -26,10 +26,50 @@ async function snapshotVici(date: string, userGroup: string | null): Promise<Sna
   return result
 }
 
+function mapForthTaskToDb(t: { id: string; userId: string; firstname?: string; lastname?: string; user_name?: string; title?: string; task_note?: string; task_due_date?: string; task_status?: string; task_completed: boolean; task_completed_date?: string; task_created_date?: string }) {
+  return {
+    id: t.id,
+    user_id: t.userId,
+    firstname: t.firstname ?? '',
+    lastname: t.lastname ?? '',
+    user_name: t.user_name ?? '',
+    title: t.title ?? '',
+    task_note: t.task_note ?? '',
+    task_due_date: t.task_due_date ?? null,
+    task_status: t.task_status ?? '',
+    task_completed: t.task_completed,
+    task_completed_date: t.task_completed_date ?? null,
+    task_created_date: t.task_created_date ?? null,
+  }
+}
+
 async function snapshotForth(date: string): Promise<{ rows: SnapshotRow[]; report: ReturnType<typeof computeForthReport> }> {
   const apiKey = process.env.FORTH_API_KEY
   if (!apiKey) throw new Error('FORTH_API_KEY is not configured')
-  const { allTasks } = await pullForthTasks(apiKey)
+  const { users, allTasks } = await pullForthTasks(apiKey)
+
+  const admin = getSupabaseAdmin()
+  if (users.length > 0) {
+    const { error } = await admin
+      .from('forth_users')
+      .upsert(users.map((user) => ({
+        id: user.id,
+        firstname: user.firstname,
+        lastname: user.lastname,
+        user_name: user.user_name ?? '',
+        role_name: user.role_name ?? '',
+        active: user.active,
+      })), { onConflict: 'id' })
+    if (error) throw new Error(`forth_users upsert failed: ${error.message}`)
+  }
+
+  if (allTasks.length > 0) {
+    const { error } = await admin
+      .from('forth_tasks')
+      .upsert(allTasks.map(mapForthTaskToDb), { onConflict: 'id, user_id' })
+    if (error) throw new Error(`forth_tasks upsert failed: ${error.message}`)
+  }
+
   const report = computeForthReport(allTasks, date, date, date)
   const rows: SnapshotRow[] = []
   for (const r of report) {
@@ -62,6 +102,16 @@ async function snapshotSheets(date: string): Promise<SnapshotRow[]> {
     }))
 }
 
+async function safeSnapshot<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (/not (?:set|configured)|must be set/i.test(message)) return null
+    throw err
+  }
+}
+
 export async function syncAll(
   date = today(),
   userGroup: string | null = null,
@@ -69,16 +119,13 @@ export async function syncAll(
   const admin = getSupabaseAdmin()
 
   const [vici, forth, gmail, sheets] = await Promise.all([
-    snapshotVici(date, userGroup),
+    safeSnapshot(() => snapshotVici(date, userGroup)).then((r) => r ?? []),
     snapshotForth(date),
-    snapshotGmail(date),
-    snapshotSheets(date),
+    safeSnapshot(() => snapshotGmail(date)).then((r) => r ?? []),
+    safeSnapshot(() => snapshotSheets(date)).then((r) => r ?? []),
   ])
 
   const all = [...vici, ...forth.rows, ...gmail, ...sheets]
-  if (all.length === 0) {
-    throw new Error('No data returned from any source for the snapshot')
-  }
 
   const { error } = await admin
     .from('report_snapshots')
@@ -95,7 +142,9 @@ export async function syncAll(
       threshold: overdueThreshold,
       observed: r.overdue,
     }))
-  await insertAlerts(alertRows)
+  if (alertRows.length > 0) {
+    await insertAlerts(alertRows)
+  }
 
   return {
     vici: vici.length,

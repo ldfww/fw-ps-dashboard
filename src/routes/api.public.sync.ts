@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import { createFileRoute } from '@tanstack/react-router'
 import { syncAll } from '~/lib/sync'
 
@@ -6,8 +7,10 @@ export const Route = createFileRoute('/api/public/sync')({
     handlers: {
       POST: async ({ request }) => {
         const body = await request.json().catch(() => ({})) as { secret?: string; date?: string; user_group?: string }
+        const url = new URL(request.url)
         const expected = process.env.SYNC_SECRET
-        if (!expected || body.secret !== expected) {
+        const provided = body.secret ?? url.searchParams.get('secret')
+        if (!expected || provided !== expected) {
           return new Response('Unauthorized', { status: 401 })
         }
         try {
