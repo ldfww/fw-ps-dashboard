@@ -59,7 +59,7 @@ const navLinks = [
   { to: '/dialer', label: 'DIALER' },
   { to: '/crm', label: 'CRM' },
   { to: '/email', label: 'EMAIL' },
-  { to: '/spreadsheet', label: 'SPREADSHEET' },
+  { to: '/spreadsheet', label: 'SALES' },
 ]
 
 function RootComponent() {

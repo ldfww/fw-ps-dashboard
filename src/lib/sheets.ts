@@ -7,20 +7,83 @@ export interface SheetTaskRow {
   tasks_assigned: number
 }
 
-export async function fetchSheetTasks(): Promise<SheetTaskRow[]> {
+export interface SalesClosingRecord {
+  date_range: string
+  start_date: string | null
+  end_date: string | null
+  agent_id: string
+  is_total: boolean
+  booked_sales: number
+  paid_sales: number
+  red_nsf: number
+  gray_pending_cancel: number
+  closing_ratio: number
+  cancelled_clients: number
+  white_scheduled: number
+}
+
+function getEnv() {
   const clientEmail = process.env.GOOGLE_SHEETS_CLIENT_EMAIL
   const privateKey = process.env.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, '\n')
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID
   if (!clientEmail || !privateKey || !spreadsheetId) {
     throw new Error('GOOGLE_SHEETS_CLIENT_EMAIL, GOOGLE_SHEETS_PRIVATE_KEY and GOOGLE_SHEETS_SPREADSHEET_ID must be set')
   }
+  return { clientEmail, privateKey, spreadsheetId }
+}
 
-  const auth = new JWT({
+function createAuth(clientEmail: string, privateKey: string) {
+  return new JWT({
     email: clientEmail,
     key: privateKey,
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   })
+}
 
+function parseNumber(value: unknown): number {
+  if (value === null || value === undefined) return 0
+  const n = Number(String(value).replace(/[^0-9.\-]/g, ''))
+  return Number.isNaN(n) ? 0 : n
+}
+
+function parseRatio(value: unknown): number {
+  if (value === null || value === undefined) return 0
+  const s = String(value).replace('%', '').trim()
+  const n = Number(s)
+  return Number.isNaN(n) ? 0 : n
+}
+
+function parseMonth(month: string): number {
+  const months: Record<string, number> = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+  }
+  return months[month.toLowerCase()] ?? -1
+}
+
+function parseDateRange(range: string): { start_date: string | null; end_date: string | null } {
+  const match = range.match(/([A-Za-z]{3})\s+(\d{1,2})\s+to\s+([A-Za-z]{3})\s+(\d{1,2})/)
+  if (!match) return { start_date: null, end_date: null }
+  const startMonth = parseMonth(match[1])
+  const startDay = Number(match[2])
+  const endMonth = parseMonth(match[3])
+  const endDay = Number(match[4])
+  if (startMonth === -1 || endMonth === -1 || Number.isNaN(startDay) || Number.isNaN(endDay)) {
+    return { start_date: null, end_date: null }
+  }
+  const year = new Date().getFullYear()
+  const start = new Date(year, startMonth, startDay)
+  const end = new Date(year, endMonth, endDay)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return {
+    start_date: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
+    end_date: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`,
+  }
+}
+
+export async function fetchSheetTasks(): Promise<SheetTaskRow[]> {
+  const { clientEmail, privateKey, spreadsheetId } = getEnv()
+  const auth = createAuth(clientEmail, privateKey)
   const sheets = google.sheets({ version: 'v4', auth })
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -44,14 +107,84 @@ export async function fetchSheetTasks(): Promise<SheetTaskRow[]> {
     const row = rows[i]
     const agent = String(row[agentIdx] ?? '').trim()
     const date = String(row[dateIdx] ?? '').trim()
-    const tasks = Number(row[tasksIdx] ?? '')
-    if (!agent || !date || Number.isNaN(tasks)) continue
+    const tasks = parseNumber(row[tasksIdx])
+    if (!agent || !date) continue
+    result.push({ agent_id: agent, log_date: date, tasks_assigned: tasks })
+  }
+
+  return result
+}
+
+export async function fetchSalesClosingRecords(): Promise<SalesClosingRecord[]> {
+  const { clientEmail, privateKey, spreadsheetId } = getEnv()
+  const auth = createAuth(clientEmail, privateKey)
+  const sheets = google.sheets({ version: 'v4', auth })
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'results!A1:Z',
+  })
+
+  const rows = res.data.values
+  if (!rows || rows.length < 2) return []
+
+  const headers = rows[0].map((h: string) => String(h).toLowerCase().trim().replace(/[\(\)\/]/g, ' '))
+  const dateRangeIdx = headers.findIndex((h) => h.includes('date') && h.includes('range'))
+  const agentIdx = headers.findIndex((h) => h === 'agent')
+  const bookedIdx = headers.findIndex((h) => h.includes('booked') || h.includes('booked sales'))
+  const paidIdx = headers.findIndex((h) => h.includes('paid') || h.includes('green'))
+  const redIdx = headers.findIndex((h) => h.includes('red') || h.includes('nsf'))
+  const grayIdx = headers.findIndex((h) => h.includes('gray') || h.includes('pending cancel'))
+  const ratioIdx = headers.findIndex((h) => h.includes('closing') || h.includes('ratio'))
+  const cancelledIdx = headers.findIndex((h) => h.includes('cancelled') || h.includes('cancelled clients'))
+  const whiteIdx = headers.findIndex((h) => h.includes('white') || h.includes('scheduled'))
+
+  const result: SalesClosingRecord[] = []
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i]
+    const dateRange = dateRangeIdx === -1 ? '' : String(row[dateRangeIdx] ?? '').trim()
+    const agent = agentIdx === -1 ? '' : String(row[agentIdx] ?? '').trim()
+    const isTotal = agent.toLowerCase() === 'total' || dateRange.toLowerCase() === 'total'
+    if (!isTotal && !agent) continue
+
+    const { start_date, end_date } = parseDateRange(dateRange)
     result.push({
-      agent_id: agent,
-      log_date: date,
-      tasks_assigned: tasks,
+      date_range: dateRange,
+      start_date,
+      end_date,
+      agent_id: isTotal ? 'TOTAL' : agent,
+      is_total: isTotal,
+      booked_sales: parseNumber(row[bookedIdx]),
+      paid_sales: parseNumber(row[paidIdx]),
+      red_nsf: parseNumber(row[redIdx]),
+      gray_pending_cancel: parseNumber(row[grayIdx]),
+      closing_ratio: parseRatio(row[ratioIdx]),
+      cancelled_clients: parseNumber(row[cancelledIdx]),
+      white_scheduled: parseNumber(row[whiteIdx]),
     })
   }
 
   return result
+}
+
+export function aggregateSalesClosingRecords(records: SalesClosingRecord[]) {
+  const total = records.find((r) => r.is_total)
+  const agents = records.filter((r) => !r.is_total)
+  return {
+    total: total ?? {
+      date_range: '',
+      start_date: null,
+      end_date: null,
+      agent_id: 'TOTAL',
+      is_total: true,
+      booked_sales: 0,
+      paid_sales: 0,
+      red_nsf: 0,
+      gray_pending_cancel: 0,
+      closing_ratio: 0,
+      cancelled_clients: 0,
+      white_scheduled: 0,
+    },
+    agents,
+    dateRange: total?.date_range ?? agents[0]?.date_range ?? '',
+  }
 }

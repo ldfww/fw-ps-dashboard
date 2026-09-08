@@ -37,9 +37,8 @@ Forth's Cloudflare WAF blocks unknown datacenter egress ranges. Before the live 
 - `npm start` should render the login page at `http://localhost:3000`
 
 ## Current Handoff
-- Overview, Dialer, CRM, and Gmail reporting are connected; the latest build and all 10 tests pass.
-- Pending: connect and redesign the Supervisor Spreadsheet page, then connect its metrics to Overview.
-- The Sheets reader currently expects the tab `Sheet1`, with headers `agent`, `date`, and `tasks_assigned`; dates should use `YYYY-MM-DD`.
-- Enable the Google Sheets API, create a read-only service account, share the spreadsheet with its client email, and configure the three Google Sheets environment variables above locally. Never commit the service-account private key.
-- After configuration, verify the live Spreadsheet page, run the sync, confirm `sheet_tasks`/snapshot persistence, and rerun the build and tests.
+- Overview, Dialer, CRM, Gmail, and Sales Closing Ratio reporting are connected; the latest build and all 10 tests pass.
+- The Sales Closing Ratio integration reads the `results` tab from the configured spreadsheet, parses `Date Range`, `Agent`, `Booked Sales`, `Paid Sales (Green)`, `Red (NSF)`, `Gray (Pending cancel)`, `Closing Ratio`, `Cancelled Clients`, and `White (Scheduled)`, and persists records to `sales_closing_records`.
+- Pending: configure the Google Sheets service-account credentials locally (`GOOGLE_SHEETS_CLIENT_EMAIL`, `GOOGLE_SHEETS_PRIVATE_KEY`, `GOOGLE_SHEETS_SPREADSHEET_ID=1k95Rwf2BoGSYvY0lujW1Kld7f1rddo1iuAl3Wrcshqg`) and apply the latest `supabase/migrations/001_schema.sql` migration to create `sales_closing_records`.
+- After configuration, verify the live `/spreadsheet` page, confirm the Overview Closing Ratio card matches the sheet totals, run the sync, and rerun the build and tests.
 - Campaign filtering remains unavailable because the current ViciDial response does not include campaign-level fields.

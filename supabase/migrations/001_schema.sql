@@ -257,6 +257,40 @@ create policy "Agents can read own sheet_tasks"
     on public.sheet_tasks for select
     using (public.has_role(auth.uid(), 'agent'::app_role) and agent_id = (select email from public.profiles where id = auth.uid()));
 
+-- Sales closing ratio records from supervisor spreadsheet
+create table if not exists public.sales_closing_records (
+    id bigserial primary key,
+    date_range text not null,
+    start_date date,
+    end_date date,
+    agent_id text not null,
+    is_total boolean default false,
+    booked_sales int default 0,
+    paid_sales int default 0,
+    red_nsf int default 0,
+    gray_pending_cancel int default 0,
+    closing_ratio numeric(5,2) default 0,
+    cancelled_clients int default 0,
+    white_scheduled int default 0,
+    created_at timestamptz default now(),
+    updated_at timestamptz default now(),
+    unique (date_range, agent_id, is_total)
+);
+
+alter table public.sales_closing_records enable row level security;
+grant select, insert, update, delete on public.sales_closing_records to authenticated;
+grant all on public.sales_closing_records to service_role;
+
+drop policy if exists "Managers can manage sales_closing_records" on public.sales_closing_records;
+create policy "Managers can manage sales_closing_records"
+    on public.sales_closing_records for all
+    using (public.has_role(auth.uid(), 'manager'::app_role));
+
+drop policy if exists "Agents can read own sales_closing_records" on public.sales_closing_records;
+create policy "Agents can read own sales_closing_records"
+    on public.sales_closing_records for select
+    using (public.has_role(auth.uid(), 'agent'::app_role) and agent_id = (select email from public.profiles where id = auth.uid()));
+
 -- Nightly snapshots for trends
 create table if not exists public.report_snapshots (
     id bigserial primary key,

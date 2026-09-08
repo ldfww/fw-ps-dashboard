@@ -4,6 +4,7 @@ import { format, subDays } from 'date-fns'
 import { fetchGmailRange } from '~/lib/gmail'
 import { getSupabaseAdmin } from '~/lib/supabase'
 import { fetchViciDialStats } from '~/lib/vicidial'
+import { aggregateSalesClosingRecords, fetchSalesClosingRecords, type SalesClosingRecord } from '~/lib/sheets'
 
 const getOverview = createServerFn({
   method: 'GET',
@@ -12,6 +13,25 @@ const getOverview = createServerFn({
   const date = format(now, 'yyyy-MM-dd')
   const emailFrom = format(subDays(now, 6), 'yyyy-MM-dd')
   const admin = getSupabaseAdmin()
+
+  let salesRecords: SalesClosingRecord[] = []
+  try {
+    salesRecords = await fetchSalesClosingRecords()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (/not (?:set|configured)|must be set/i.test(message)) {
+      const { data, error } = await admin
+        .from('sales_closing_records')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) throw new Error(`Failed to load sales closing records: ${error.message}`)
+      salesRecords = (data ?? []) as SalesClosingRecord[]
+    } else {
+      throw err
+    }
+  }
+  const sales = aggregateSalesClosingRecords(salesRecords)
+
   const [{ data: forthUsers, error: usersError }, dialerRows, emailCounts] = await Promise.all([
     admin.from('forth_users').select('id, role_name, active'),
     fetchViciDialStats(date, null),
@@ -61,6 +81,16 @@ const getOverview = createServerFn({
       unopened: emailCounts.reduce((sum, count) => sum + count.unopened, 0),
     },
     spreadsheet: { agents: 0, avgDay: 0 },
+    sales: {
+      dateRange: sales.dateRange,
+      booked: sales.total.booked_sales,
+      paid: sales.total.paid_sales,
+      red: sales.total.red_nsf,
+      gray: sales.total.gray_pending_cancel,
+      ratio: sales.total.closing_ratio,
+      cancelled: sales.total.cancelled_clients,
+      white: sales.total.white_scheduled,
+    },
   }
 })
 
@@ -107,17 +137,18 @@ function Home() {
         />
         <SourceCard
           to="/spreadsheet"
-          title="SPREADSHEET"
-          subtitle="Manual supervisor log"
+          title="SALES"
+          subtitle={data.sales.dateRange || 'Closing ratio sheet'}
           metrics={[
-            { label: 'AGENTS', value: data.spreadsheet.agents },
-            { label: 'AVG / DAY', value: data.spreadsheet.avgDay },
+            { label: 'BOOKED', value: data.sales.booked },
+            { label: 'PAID', value: data.sales.paid },
+            { label: 'RATIO', value: `${data.sales.ratio.toFixed(2)}%` },
           ]}
         />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ClosingRatio />
+        <ClosingRatio data={data.sales} />
         <EarlyWarning />
       </div>
     </div>
@@ -161,13 +192,29 @@ function SourceCard({
   )
 }
 
-function ClosingRatio() {
+function ClosingRatio({
+  data,
+}: {
+  data: {
+    dateRange: string
+    booked: number
+    paid: number
+    red: number
+    gray: number
+    ratio: number
+    cancelled: number
+    white: number
+  }
+}) {
+  const didNotPay = Math.max(data.booked - data.paid - data.red - data.gray - data.white, 0)
+  const width = Math.min(Math.max(data.ratio, 0), 100)
+
   return (
     <div className="rounded-2xl bg-dark p-6 text-paper">
       <div className="flex items-start justify-between">
         <div>
           <h2 className="font-sora text-sm font-bold">CLOSING RATIO</h2>
-          <p className="text-xs text-paper/60">Cristy Collado · 1 — 15 July</p>
+          <p className="text-xs text-paper/60">{data.dateRange || 'Latest sheet range'}</p>
         </div>
         <button className="rounded-full border border-paper/20 px-3 py-1 text-xs font-semibold hover:bg-paper/10">
           EXPORT
@@ -175,35 +222,43 @@ function ClosingRatio() {
       </div>
 
       <div className="mt-4">
-        <p className="font-sora text-5xl font-bold">57.89<span className="text-2xl">%</span></p>
-        <p className="mt-1 text-xs text-paper/60">22 PAID OF 38 BOOKED · 0 SCHEDULED</p>
+        <p className="font-sora text-5xl font-bold">{data.ratio.toFixed(2)}<span className="text-2xl">%</span></p>
+        <p className="mt-1 text-xs text-paper/60">
+          {data.paid} PAID OF {data.booked} BOOKED · {data.white} SCHEDULED
+        </p>
       </div>
 
       <div className="mt-4 h-2 w-full rounded-full bg-paper/20">
-        <div className="h-2 rounded-full bg-paper" style={{ width: '57.89%' }} />
+        <div className="h-2 rounded-full bg-paper" style={{ width: `${width}%` }} />
       </div>
 
       <div className="mt-4 space-y-1 text-xs">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-paper" /> Paid</span>
-          <span className="font-semibold">22</span>
+          <span className="font-semibold">{data.paid}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-accent" /> Did not pay</span>
-          <span className="font-semibold">6</span>
+          <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-accent" /> Red (NSF)</span>
+          <span className="font-semibold">{data.red}</span>
         </div>
+        {didNotPay > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-paper/40" /> Did not pay</span>
+            <span className="font-semibold">{didNotPay}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-paper/40" /> Pending cancel</span>
-          <span className="font-semibold">1</span>
+          <span className="font-semibold">{data.gray}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-paper/20" /> Cancelled</span>
-          <span className="font-semibold">9</span>
+          <span className="font-semibold">{data.cancelled}</span>
         </div>
       </div>
 
       <p className="mt-4 text-xs text-paper/40">
-        The same calculation used in the spreadsheet below, produced automatically every day.
+        Pulled from the supervisor spreadsheet results tab and refreshed on sync.
       </p>
     </div>
   )

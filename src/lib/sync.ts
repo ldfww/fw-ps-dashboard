@@ -2,7 +2,7 @@ import { format } from 'date-fns'
 import { fetchViciDialStats } from './vicidial'
 import { computeForthReport, pullForthTasks, today } from './forth'
 import { fetchGmailCountsForDay } from './gmail'
-import { fetchSheetTasks } from './sheets'
+import { fetchSheetTasks, fetchSalesClosingRecords, type SalesClosingRecord } from './sheets'
 import { getSupabaseAdmin } from './supabase'
 import { insertAlerts } from './alerts'
 
@@ -89,9 +89,21 @@ async function snapshotGmail(date: string): Promise<SnapshotRow[]> {
   ]
 }
 
-async function snapshotSheets(date: string): Promise<SnapshotRow[]> {
-  const rows = await fetchSheetTasks()
-  return rows
+async function snapshotSheets(date: string): Promise<{ snapshot: SnapshotRow[]; sales: SalesClosingRecord[] }> {
+  const [tasks, sales] = await Promise.all([
+    fetchSheetTasks().catch((err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      if (/not (?:set|configured)|must be set/i.test(message)) return []
+      throw err
+    }),
+    fetchSalesClosingRecords().catch((err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      if (/not (?:set|configured)|must be set/i.test(message)) return []
+      throw err
+    }),
+  ])
+
+  const snapshot: SnapshotRow[] = tasks
     .filter((r) => r.log_date === date)
     .map((r) => ({
       snapshot_date: date,
@@ -100,6 +112,25 @@ async function snapshotSheets(date: string): Promise<SnapshotRow[]> {
       metric: 'tasks_assigned',
       value: r.tasks_assigned,
     }))
+
+  return { snapshot, sales }
+}
+
+function mapSalesRecordToDb(r: SalesClosingRecord) {
+  return {
+    date_range: r.date_range,
+    start_date: r.start_date,
+    end_date: r.end_date,
+    agent_id: r.agent_id,
+    is_total: r.is_total,
+    booked_sales: r.booked_sales,
+    paid_sales: r.paid_sales,
+    red_nsf: r.red_nsf,
+    gray_pending_cancel: r.gray_pending_cancel,
+    closing_ratio: r.closing_ratio,
+    cancelled_clients: r.cancelled_clients,
+    white_scheduled: r.white_scheduled,
+  }
 }
 
 async function safeSnapshot<T>(fn: () => Promise<T>): Promise<T | null> {
@@ -115,22 +146,29 @@ async function safeSnapshot<T>(fn: () => Promise<T>): Promise<T | null> {
 export async function syncAll(
   date = today(),
   userGroup: string | null = null,
-): Promise<{ vici: number; forth: number; gmail: number; sheets: number }> {
+): Promise<{ vici: number; forth: number; gmail: number; sheets: number; sales: number }> {
   const admin = getSupabaseAdmin()
 
   const [vici, forth, gmail, sheets] = await Promise.all([
     safeSnapshot(() => snapshotVici(date, userGroup)).then((r) => r ?? []),
     snapshotForth(date),
     safeSnapshot(() => snapshotGmail(date)).then((r) => r ?? []),
-    safeSnapshot(() => snapshotSheets(date)).then((r) => r ?? []),
+    safeSnapshot(() => snapshotSheets(date)).then((r) => r ?? { snapshot: [], sales: [] }),
   ])
 
-  const all = [...vici, ...forth.rows, ...gmail, ...sheets]
+  const all = [...vici, ...forth.rows, ...gmail, ...sheets.snapshot]
 
   const { error } = await admin
     .from('report_snapshots')
     .upsert(all, { onConflict: 'snapshot_date, source, agent_id, metric' })
   if (error) throw new Error(`Snapshot upsert failed: ${error.message}`)
+
+  if (sheets.sales.length > 0) {
+    const { error: salesError } = await admin
+      .from('sales_closing_records')
+      .upsert(sheets.sales.map(mapSalesRecordToDb), { onConflict: 'date_range, agent_id, is_total' })
+    if (salesError) throw new Error(`Sales closing records upsert failed: ${salesError.message}`)
+  }
 
   const overdueThreshold = Number(process.env.THRESHOLD_OVERDUE) || 30
   const alertRows = forth.report
@@ -150,6 +188,7 @@ export async function syncAll(
     vici: vici.length,
     forth: forth.rows.length,
     gmail: gmail.length,
-    sheets: sheets.length,
+    sheets: sheets.snapshot.length,
+    sales: sheets.sales.length,
   }
 }
