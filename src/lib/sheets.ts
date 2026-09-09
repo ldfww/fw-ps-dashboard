@@ -127,26 +127,37 @@ export async function fetchSalesClosingRecords(): Promise<SalesClosingRecord[]> 
   const rows = res.data.values
   if (!rows || rows.length < 2) return []
 
-  const headers = rows[0].map((h: string) => String(h).toLowerCase().trim().replace(/[\(\)\/]/g, ' '))
+  // The sheet may have a title row above the actual headers; locate the header row
+  // by requiring multiple expected headers to be present.
+  const headerRowIndex = rows.findIndex((row) => {
+    const values = row.map((cell: unknown) => String(cell ?? '').toLowerCase().trim())
+    const hasAgent = values.some((v) => v === 'agent' || v.includes('agents')) && values.some((v) => v.includes('booked'))
+    const hasDateRangeAndBooked = values.some((v) => v.includes('date') && v.includes('range')) && values.some((v) => v.includes('booked'))
+    return hasAgent || hasDateRangeAndBooked
+  })
+  if (headerRowIndex === -1) return []
+
+  const headers = rows[headerRowIndex].map((h: string) => String(h).toLowerCase().trim().replace(/[\(\)\/]/g, ' '))
   const dateRangeIdx = headers.findIndex((h) => h.includes('date') && h.includes('range'))
   const agentIdx = headers.findIndex((h) => h === 'agent')
-  const bookedIdx = headers.findIndex((h) => h.includes('booked') || h.includes('booked sales'))
+  const bookedIdx = headers.findIndex((h) => h.includes('booked'))
   const paidIdx = headers.findIndex((h) => h.includes('paid') || h.includes('green'))
   const redIdx = headers.findIndex((h) => h.includes('red') || h.includes('nsf'))
-  const grayIdx = headers.findIndex((h) => h.includes('gray') || h.includes('pending cancel'))
+  const grayIdx = headers.findIndex((h) => h.includes('gray') || h.includes('pending'))
   const ratioIdx = headers.findIndex((h) => h.includes('closing') || h.includes('ratio'))
-  const cancelledIdx = headers.findIndex((h) => h.includes('cancelled') || h.includes('cancelled clients'))
+  const cancelledIdx = headers.findIndex((h) => h.includes('cancelled'))
   const whiteIdx = headers.findIndex((h) => h.includes('white') || h.includes('scheduled'))
 
   const result: SalesClosingRecord[] = []
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = headerRowIndex + 1; i < rows.length; i++) {
     const row = rows[i]
     const dateRange = dateRangeIdx === -1 ? '' : String(row[dateRangeIdx] ?? '').trim()
     const agent = agentIdx === -1 ? '' : String(row[agentIdx] ?? '').trim()
-    const isTotal = agent.toLowerCase() === 'total' || dateRange.toLowerCase() === 'total'
+    const firstCol = String(row[0] ?? '').toLowerCase().trim()
+    const isTotal = firstCol === 'total' || agent.toLowerCase() === 'total' || dateRange.toLowerCase() === 'total'
     if (!isTotal && !agent) continue
 
-    const { start_date, end_date } = parseDateRange(dateRange)
+    const { start_date, end_date } = parseDateRange(isTotal && !dateRange ? agent : dateRange)
     result.push({
       date_range: dateRange,
       start_date,

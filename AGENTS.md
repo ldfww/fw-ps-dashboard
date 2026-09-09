@@ -39,6 +39,7 @@ Forth's Cloudflare WAF blocks unknown datacenter egress ranges. Before the live 
 ## Current Handoff
 - Overview, Dialer, CRM, Gmail, and Sales Closing Ratio reporting are connected; the latest build and all 10 tests pass.
 - The Sales Closing Ratio integration reads the `results` tab from the configured spreadsheet, parses `Date Range`, `Agent`, `Booked Sales`, `Paid Sales (Green)`, `Red (NSF)`, `Gray (Pending cancel)`, `Closing Ratio`, `Cancelled Clients`, and `White (Scheduled)`, and persists records to `sales_closing_records`.
-- Pending: configure the Google Sheets service-account credentials locally (`GOOGLE_SHEETS_CLIENT_EMAIL`, `GOOGLE_SHEETS_PRIVATE_KEY`, `GOOGLE_SHEETS_SPREADSHEET_ID=1k95Rwf2BoGSYvY0lujW1Kld7f1rddo1iuAl3Wrcshqg`) and apply the latest `supabase/migrations/001_schema.sql` migration to create `sales_closing_records`.
-- After configuration, verify the live `/spreadsheet` page, confirm the Overview Closing Ratio card matches the sheet totals, run the sync, and rerun the build and tests.
+- The Google Sheets service-account credentials are configured locally and the `supabase/migrations/001_schema.sql` migration has been applied. The live `results` tab currently parses 17 agent rows + 1 total row and the total closing ratio matches the sheet at 49.27%.
+- `server.mjs` was updated to use `@hono/node-server/serve-static` so the production preview correctly serves `dist/client` assets and styles.
+- The build, tests, and local parser verification pass; the SALES and Overview Closing Ratio cards should now load live data in the refreshed preview.
 - Campaign filtering remains unavailable because the current ViciDial response does not include campaign-level fields.

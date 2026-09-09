@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { serveStatic } from 'hono/serve-static'
+import { serveStatic } from '@hono/node-server/serve-static'
 import handler from './dist/server/server.js'
 
 const app = new Hono()
