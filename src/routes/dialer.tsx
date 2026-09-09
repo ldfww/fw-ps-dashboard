@@ -17,6 +17,26 @@ function formatHHMM(totalSeconds: number): string {
   return `${h}:${String(m).padStart(2, '0')}`
 }
 
+const LUNCH_LIMIT_SECS = 3600
+const BREAK_ONE_LIMIT_SECS = 900
+const BREAK_TOTAL_LIMIT_SECS = 1800
+
+interface TimeAlert {
+  color: string
+  message: string
+}
+
+function breakAlert(seconds: number): TimeAlert | null {
+  if (seconds > BREAK_TOTAL_LIMIT_SECS) return { color: 'text-red-600', message: 'over 30m' }
+  if (seconds > BREAK_ONE_LIMIT_SECS) return { color: 'text-orange-500', message: 'over 15m' }
+  return null
+}
+
+function lunchAlert(seconds: number): TimeAlert | null {
+  if (seconds > LUNCH_LIMIT_SECS) return { color: 'text-red-600', message: 'over 1h' }
+  return null
+}
+
 function aggregateRows(rows: ViciDialStatsRow[]) {
   const agents = new Map<string, ViciDialStatsRow>()
   for (const row of rows) {
@@ -94,6 +114,8 @@ function DialerPage() {
   const totalLogin = vici.rows.reduce((sum, row) => sum + row.login_time_secs, 0)
   const totalBreak = vici.rows.reduce((sum, row) => sum + row.break_time_secs, 0)
   const totalLunch = vici.rows.reduce((sum, row) => sum + row.lunch_time_secs, 0)
+  const overLunch = vici.rows.filter((row) => row.lunch_time_secs > LUNCH_LIMIT_SECS).length
+  const overBreak = vici.rows.filter((row) => row.break_time_secs > BREAK_ONE_LIMIT_SECS).length
   const avgTalkPct = vici.rows.length
     ? vici.rows.reduce((sum, row) => sum + (row.talk_time_secs / (row.login_time_secs || 1)) * 100, 0) / vici.rows.length
     : 0
@@ -136,7 +158,7 @@ function DialerPage() {
         </label>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-9">
         <KpiBox label="AGENTS" value={vici.rows.length} />
         <KpiBox label="CALLS" value={totalCalls} />
         <KpiBox label="LOGGED IN" value={formatHHMM(vici.rows.length ? Math.round(totalLogin / vici.rows.length) : 0)} />
@@ -144,6 +166,8 @@ function DialerPage() {
         <KpiBox label="PAUSE" value={`${avgPausePct.toFixed(1)}%`} />
         <KpiBox label="BREAK" value={formatHHMM(totalBreak)} />
         <KpiBox label="LUNCH" value={formatHHMM(totalLunch)} />
+        <KpiBox label="OVER LUNCH" value={overLunch} />
+        <KpiBox label="OVER BREAK" value={overBreak} />
       </div>
 
       <div className="rounded-2xl bg-card p-6 shadow-sm">
@@ -172,11 +196,17 @@ function DialerPage() {
             const breakPct = (row.break_time_secs / total) * 100
             const lunchPct = (row.lunch_time_secs / total) * 100
             const otherPausePct = Math.max(0, pausePct - breakPct - lunchPct)
+            const breakInfo = breakAlert(row.break_time_secs)
+            const lunchInfo = lunchAlert(row.lunch_time_secs)
             return (
               <div key={row.agent_id}>
                 <div className="flex items-center justify-between gap-4 text-xs">
                   <span className="font-semibold text-ink">{row.agent_name}</span>
-                  <span className="text-right text-muted">{row.user_group} · {row.calls} calls · {talkPct.toFixed(1)}% talk · {pausePct.toFixed(1)}% pause · {formatHHMM(row.break_time_secs)} break · {formatHHMM(row.lunch_time_secs)} lunch</span>
+                  <span className="text-right text-muted">
+                    {row.user_group} · {row.calls} calls · {talkPct.toFixed(1)}% talk · {pausePct.toFixed(1)}% pause ·{' '}
+                    <span className={breakInfo ? breakInfo.color : ''}>{formatHHMM(row.break_time_secs)} break {breakInfo?.message ?? ''}</span> ·{' '}
+                    <span className={lunchInfo ? lunchInfo.color : ''}>{formatHHMM(row.lunch_time_secs)} lunch {lunchInfo?.message ?? ''}</span>
+                  </span>
                 </div>
                 <div className="mt-1 flex h-2 w-full overflow-hidden rounded-full bg-ink/10">
                   <div className="h-full bg-ink" style={{ width: `${talkPct}%` }} />
