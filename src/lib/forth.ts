@@ -1,4 +1,4 @@
-import { format, isBefore, isValid, isWithinInterval, parseISO } from 'date-fns'
+import { format } from 'date-fns'
 
 const FORTH_BASE = 'https://api.forthcrm.com/v1'
 const PAGE_LIMIT = 500
@@ -348,26 +348,20 @@ export function computeForthReport(
       byUser.set(t.userId, row)
     }
 
-    const due = t.task_due_date ? parseISO(t.task_due_date) : null
-    const completed = t.task_completed_date ? parseISO(t.task_completed_date) : null
-    const asOfDate = parseISO(asOf)
+    const dueDate = t.task_due_date || null
+    const completedDate = t.task_completed_date || null
 
-    const completedAsOf = t.task_completed && completed && isValid(completed) && !isBefore(asOfDate, completed)
+    const completedAsOf = t.task_completed && (!completedDate || completedDate <= asOf)
 
     if (!completedAsOf) {
-      if (due && isValid(due) && isBefore(due, asOfDate)) {
+      if (dueDate && dueDate < asOf) {
         row.overdue++
       } else {
         row.open++
       }
     }
 
-    if (
-      t.task_completed &&
-      completed &&
-      isValid(completed) &&
-      isWithinInterval(completed, { start: parseISO(from), end: parseISO(to) })
-    ) {
+    if (t.task_completed && completedDate && completedDate >= from && completedDate <= to) {
       row.done++
     }
   }
