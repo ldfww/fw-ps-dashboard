@@ -20,6 +20,7 @@ export interface ViciDialRange {
 export interface ViciDialInboundDrop {
   group: string
   total_calls: number
+  answered_calls: number
   drop_calls: number
 }
 
@@ -264,10 +265,11 @@ function parseCallStatusStats(text: string): ViciDialInboundDrop[] {
 
     const group = parts[0].trim()
     const totalCalls = parseInteger(parts[1])
+    const answeredCalls = parseInteger(parts[2])
     const dropCalls = parseStatusBreakdown(parts[4], 'DROP')
 
     if (!group) continue
-    rows.push({ group, total_calls: totalCalls, drop_calls: dropCalls })
+    rows.push({ group, total_calls: totalCalls, answered_calls: answeredCalls, drop_calls: dropCalls })
   }
 
   return rows
@@ -373,6 +375,7 @@ export async function syncInboundGroupDropsRange(
         continue
       }
       current.total_calls += row.total_calls
+      current.answered_calls += row.answered_calls
       current.drop_calls += row.drop_calls
     }
   }

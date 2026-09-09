@@ -237,6 +237,7 @@ function DialerPage() {
               <tr className="border-b border-ink/10 text-muted">
                 <th className="pb-2 font-semibold">Inbound group</th>
                 <th className="pb-2 font-semibold text-right">Total calls</th>
+                <th className="pb-2 font-semibold text-right">Answered</th>
                 <th className="pb-2 font-semibold text-right">Drops</th>
                 <th className="pb-2 font-semibold text-right">Drop rate</th>
               </tr>
@@ -251,6 +252,7 @@ function DialerPage() {
                     <tr key={row.group} className="border-b border-ink/5 last:border-0">
                       <td className="py-2 font-semibold text-ink">{row.group}</td>
                       <td className="py-2 text-right text-muted">{row.total_calls}</td>
+                      <td className="py-2 text-right text-ink">{row.answered_calls}</td>
                       <td className="py-2 text-right font-semibold text-accent">{row.drop_calls}</td>
                       <td className="py-2 text-right text-muted">{dropRate.toFixed(1)}%</td>
                     </tr>
@@ -258,7 +260,7 @@ function DialerPage() {
                 })}
               {drops.rows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-6 text-center text-muted">No inbound group drop data found for this range.</td>
+                  <td colSpan={5} className="py-6 text-center text-muted">No inbound group drop data found for this range.</td>
                 </tr>
               )}
             </tbody>
