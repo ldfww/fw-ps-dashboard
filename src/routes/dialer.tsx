@@ -29,6 +29,8 @@ function aggregateRows(rows: ViciDialStatsRow[]) {
     current.talk_time_secs += row.talk_time_secs
     current.wait_time_secs += row.wait_time_secs
     current.pause_time_secs += row.pause_time_secs
+    current.break_time_secs += row.break_time_secs
+    current.lunch_time_secs += row.lunch_time_secs
     current.login_time_secs += row.login_time_secs
   }
   return Array.from(agents.values()).sort((a, b) => b.calls - a.calls || a.agent_name.localeCompare(b.agent_name))
@@ -65,6 +67,8 @@ function DialerPage() {
   const navigate = useNavigate()
   const totalCalls = data.rows.reduce((sum, row) => sum + row.calls, 0)
   const totalLogin = data.rows.reduce((sum, row) => sum + row.login_time_secs, 0)
+  const totalBreak = data.rows.reduce((sum, row) => sum + row.break_time_secs, 0)
+  const totalLunch = data.rows.reduce((sum, row) => sum + row.lunch_time_secs, 0)
   const avgTalkPct = data.rows.length
     ? data.rows.reduce((sum, row) => sum + (row.talk_time_secs / (row.login_time_secs || 1)) * 100, 0) / data.rows.length
     : 0
@@ -106,12 +110,14 @@ function DialerPage() {
         </label>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
         <KpiBox label="AGENTS" value={data.rows.length} />
         <KpiBox label="CALLS" value={totalCalls} />
         <KpiBox label="LOGGED IN" value={formatHHMM(data.rows.length ? Math.round(totalLogin / data.rows.length) : 0)} />
         <KpiBox label="TALK" value={`${avgTalkPct.toFixed(1)}%`} />
         <KpiBox label="PAUSE" value={`${avgPausePct.toFixed(1)}%`} />
+        <KpiBox label="BREAK" value={formatHHMM(totalBreak)} />
+        <KpiBox label="LUNCH" value={formatHHMM(totalLunch)} />
       </div>
 
       <div className="rounded-2xl bg-card p-6 shadow-sm">
@@ -126,6 +132,8 @@ function DialerPage() {
         <div className="mt-4 flex items-center gap-4 text-xs text-muted">
           <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-ink" /> Talk</span>
           <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-ink/30" /> Wait</span>
+          <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-break" /> Break</span>
+          <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-lunch" /> Lunch</span>
           <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-accent" /> Pause</span>
         </div>
 
@@ -135,16 +143,21 @@ function DialerPage() {
             const talkPct = (row.talk_time_secs / total) * 100
             const waitPct = (row.wait_time_secs / total) * 100
             const pausePct = (row.pause_time_secs / total) * 100
+            const breakPct = (row.break_time_secs / total) * 100
+            const lunchPct = (row.lunch_time_secs / total) * 100
+            const otherPausePct = Math.max(0, pausePct - breakPct - lunchPct)
             return (
               <div key={row.agent_id}>
                 <div className="flex items-center justify-between gap-4 text-xs">
                   <span className="font-semibold text-ink">{row.agent_name}</span>
-                  <span className="text-right text-muted">{row.user_group} · {row.calls} calls · {talkPct.toFixed(1)}% talk · {pausePct.toFixed(1)}% pause</span>
+                  <span className="text-right text-muted">{row.user_group} · {row.calls} calls · {talkPct.toFixed(1)}% talk · {pausePct.toFixed(1)}% pause · {formatHHMM(row.break_time_secs)} break · {formatHHMM(row.lunch_time_secs)} lunch</span>
                 </div>
                 <div className="mt-1 flex h-2 w-full overflow-hidden rounded-full bg-ink/10">
                   <div className="h-full bg-ink" style={{ width: `${talkPct}%` }} />
                   <div className="h-full bg-ink/30" style={{ width: `${waitPct}%` }} />
-                  <div className="h-full bg-accent" style={{ width: `${pausePct}%` }} />
+                  <div className="h-full bg-break" style={{ width: `${breakPct}%` }} />
+                  <div className="h-full bg-lunch" style={{ width: `${lunchPct}%` }} />
+                  <div className="h-full bg-accent" style={{ width: `${otherPausePct}%` }} />
                 </div>
               </div>
             )
