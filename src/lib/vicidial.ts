@@ -336,7 +336,6 @@ export async function fetchInboundGroupDrops(
     pass,
     campaigns: campaign ?? '---ALL---',
     query_date: date,
-    statuses: 'DROP',
     stage: 'pipe',
     header: 'YES',
   })
