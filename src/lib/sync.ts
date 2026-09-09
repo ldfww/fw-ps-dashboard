@@ -139,7 +139,8 @@ async function safeSnapshot<T>(fn: () => Promise<T>): Promise<T | null> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/not (?:set|configured)|must be set/i.test(message)) return null
-    throw err
+    console.warn('Sync source failed (continuing without it):', message)
+    return null
   }
 }
 
@@ -151,17 +152,19 @@ export async function syncAll(
 
   const [vici, forth, gmail, sheets] = await Promise.all([
     safeSnapshot(() => snapshotVici(date, userGroup)).then((r) => r ?? []),
-    snapshotForth(date),
+    safeSnapshot(() => snapshotForth(date)).then((r) => r ?? { rows: [], report: [] }),
     safeSnapshot(() => snapshotGmail(date)).then((r) => r ?? []),
     safeSnapshot(() => snapshotSheets(date)).then((r) => r ?? { snapshot: [], sales: [] }),
   ])
 
   const all = [...vici, ...forth.rows, ...gmail, ...sheets.snapshot]
 
-  const { error } = await admin
-    .from('report_snapshots')
-    .upsert(all, { onConflict: 'snapshot_date, source, agent_id, metric' })
-  if (error) throw new Error(`Snapshot upsert failed: ${error.message}`)
+  if (all.length > 0) {
+    const { error } = await admin
+      .from('report_snapshots')
+      .upsert(all, { onConflict: 'snapshot_date, source, agent_id, metric' })
+    if (error) throw new Error(`Snapshot upsert failed: ${error.message}`)
+  }
 
   if (sheets.sales.length > 0) {
     const { error: salesError } = await admin

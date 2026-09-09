@@ -85,46 +85,60 @@ export async function fetchSheetTasks(): Promise<SheetTaskRow[]> {
   const { clientEmail, privateKey, spreadsheetId } = getEnv()
   const auth = createAuth(clientEmail, privateKey)
   const sheets = google.sheets({ version: 'v4', auth })
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'Sheet1!A1:Z',
-  })
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Sheet1!A1:Z1000',
+    })
 
-  const rows = res.data.values
-  if (!rows || rows.length < 2) return []
+    const rows = res.data.values
+    if (!rows || rows.length < 2) return []
 
-  const headers = rows[0].map((h: string) => h.toLowerCase().trim())
-  const agentIdx = headers.indexOf('agent')
-  const dateIdx = headers.indexOf('date')
-  const tasksIdx = headers.indexOf('tasks_assigned')
+    const headers = rows[0].map((h: string) => h.toLowerCase().trim())
+    const agentIdx = headers.indexOf('agent')
+    const dateIdx = headers.indexOf('date')
+    const tasksIdx = headers.indexOf('tasks_assigned')
 
-  if (agentIdx === -1 || dateIdx === -1 || tasksIdx === -1) {
-    throw new Error('Sheet must contain agent, date and tasks_assigned columns')
+    if (agentIdx === -1 || dateIdx === -1 || tasksIdx === -1) {
+      console.warn('Sheet must contain agent, date and tasks_assigned columns')
+      return []
+    }
+
+    const result: SheetTaskRow[] = []
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i]
+      const agent = String(row[agentIdx] ?? '').trim()
+      const date = String(row[dateIdx] ?? '').trim()
+      const tasks = parseNumber(row[tasksIdx])
+      if (!agent || !date) continue
+      result.push({ agent_id: agent, log_date: date, tasks_assigned: tasks })
+    }
+
+    return result
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('Google Sheets tasks read failed:', message)
+    return []
   }
-
-  const result: SheetTaskRow[] = []
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i]
-    const agent = String(row[agentIdx] ?? '').trim()
-    const date = String(row[dateIdx] ?? '').trim()
-    const tasks = parseNumber(row[tasksIdx])
-    if (!agent || !date) continue
-    result.push({ agent_id: agent, log_date: date, tasks_assigned: tasks })
-  }
-
-  return result
 }
 
 export async function fetchSalesClosingRecords(): Promise<SalesClosingRecord[]> {
   const { clientEmail, privateKey, spreadsheetId } = getEnv()
   const auth = createAuth(clientEmail, privateKey)
   const sheets = google.sheets({ version: 'v4', auth })
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'results!A1:Z',
-  })
+  let rows: unknown[][] | undefined
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'results!A1:Z1000',
+    })
+    rows = res.data.values
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('Google Sheets sales read failed:', message)
+    return []
+  }
 
-  const rows = res.data.values
   if (!rows || rows.length < 2) return []
 
   // The sheet may have a title row above the actual headers; locate the header row
