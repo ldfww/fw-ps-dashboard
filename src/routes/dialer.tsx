@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { differenceInCalendarDays, format, parseISO, subDays } from 'date-fns'
-import { syncViciDialRange, type ViciDialStatsRow } from '~/lib/vicidial'
+import { syncInboundGroupDropsRange, syncViciDialRange, type ViciDialStatsRow } from '~/lib/vicidial'
 
 function today(): string {
   return format(new Date(), 'yyyy-MM-dd')
@@ -47,6 +47,15 @@ const getViciDial = createServerFn({ method: 'GET' })
     return { from: data.from, to: data.to, group: data.group, groups, rows: aggregateRows(filtered) }
   })
 
+const getInboundGroupDrops = createServerFn({ method: 'GET' })
+  .validator((input: { from: string; to: string }) => input)
+  .handler(async ({ data }) => {
+    const days = differenceInCalendarDays(parseISO(data.to), parseISO(data.from))
+    if (days < 0 || days > 30) throw new Error('Dialer date range must be between 1 and 31 days')
+    const rows = await syncInboundGroupDropsRange(data.from, data.to)
+    return { from: data.from, to: data.to, rows }
+  })
+
 export const Route = createFileRoute('/dialer')({
   validateSearch: (search: Record<string, unknown>) => {
     const to = isDate(search.to) ? search.to : today()
@@ -58,22 +67,30 @@ export const Route = createFileRoute('/dialer')({
   },
   loaderDeps: ({ search }) => search,
   component: DialerPage,
-  loader: async ({ deps }) => await getViciDial({ data: deps }),
+  loader: async ({ deps }) => {
+    const [vici, drops] = await Promise.all([
+      getViciDial({ data: deps }),
+      getInboundGroupDrops({ data: { from: deps.from, to: deps.to } }),
+    ])
+    return { vici, drops }
+  },
 })
 
 function DialerPage() {
   const data = Route.useLoaderData()
+  const vici = data.vici
+  const drops = data.drops
   const search = Route.useSearch()
   const navigate = useNavigate()
-  const totalCalls = data.rows.reduce((sum, row) => sum + row.calls, 0)
-  const totalLogin = data.rows.reduce((sum, row) => sum + row.login_time_secs, 0)
-  const totalBreak = data.rows.reduce((sum, row) => sum + row.break_time_secs, 0)
-  const totalLunch = data.rows.reduce((sum, row) => sum + row.lunch_time_secs, 0)
-  const avgTalkPct = data.rows.length
-    ? data.rows.reduce((sum, row) => sum + (row.talk_time_secs / (row.login_time_secs || 1)) * 100, 0) / data.rows.length
+  const totalCalls = vici.rows.reduce((sum, row) => sum + row.calls, 0)
+  const totalLogin = vici.rows.reduce((sum, row) => sum + row.login_time_secs, 0)
+  const totalBreak = vici.rows.reduce((sum, row) => sum + row.break_time_secs, 0)
+  const totalLunch = vici.rows.reduce((sum, row) => sum + row.lunch_time_secs, 0)
+  const avgTalkPct = vici.rows.length
+    ? vici.rows.reduce((sum, row) => sum + (row.talk_time_secs / (row.login_time_secs || 1)) * 100, 0) / vici.rows.length
     : 0
-  const avgPausePct = data.rows.length
-    ? data.rows.reduce((sum, row) => sum + (row.pause_time_secs / (row.login_time_secs || 1)) * 100, 0) / data.rows.length
+  const avgPausePct = vici.rows.length
+    ? vici.rows.reduce((sum, row) => sum + (row.pause_time_secs / (row.login_time_secs || 1)) * 100, 0) / vici.rows.length
     : 0
 
   function update(next: Partial<typeof search>) {
@@ -99,7 +116,7 @@ function DialerPage() {
           <span className="mb-1 block">USER GROUP</span>
           <select value={search.group} onChange={(event) => update({ group: event.target.value })} className="rounded-lg border border-ink/10 bg-paper px-3 py-2 text-sm text-ink">
             <option value="all">All groups</option>
-            {data.groups.map((group) => <option key={group} value={group}>{group}</option>)}
+            {vici.groups.map((group) => <option key={group} value={group}>{group}</option>)}
           </select>
         </label>
         <label className="text-xs font-semibold text-muted">
@@ -111,9 +128,9 @@ function DialerPage() {
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
-        <KpiBox label="AGENTS" value={data.rows.length} />
+        <KpiBox label="AGENTS" value={vici.rows.length} />
         <KpiBox label="CALLS" value={totalCalls} />
-        <KpiBox label="LOGGED IN" value={formatHHMM(data.rows.length ? Math.round(totalLogin / data.rows.length) : 0)} />
+        <KpiBox label="LOGGED IN" value={formatHHMM(vici.rows.length ? Math.round(totalLogin / vici.rows.length) : 0)} />
         <KpiBox label="TALK" value={`${avgTalkPct.toFixed(1)}%`} />
         <KpiBox label="PAUSE" value={`${avgPausePct.toFixed(1)}%`} />
         <KpiBox label="BREAK" value={formatHHMM(totalBreak)} />
@@ -124,7 +141,7 @@ function DialerPage() {
         <div className="flex items-start justify-between">
           <div>
             <h2 className="font-sora text-sm font-bold text-ink">AGENT TIME</h2>
-            <p className="text-xs text-muted">Live from ViciDial · {data.from} → {data.to} · {search.group === 'all' ? 'All groups' : search.group}</p>
+            <p className="text-xs text-muted">Live from ViciDial · {vici.from} → {vici.to} · {search.group === 'all' ? 'All groups' : search.group}</p>
           </div>
           <button className="rounded-full border border-ink/10 px-3 py-1 text-xs font-semibold text-ink hover:bg-ink/5">EXPORT</button>
         </div>
@@ -138,7 +155,7 @@ function DialerPage() {
         </div>
 
         <div className="mt-4 space-y-3">
-          {data.rows.map((row) => {
+          {vici.rows.map((row) => {
             const total = row.login_time_secs || 1
             const talkPct = (row.talk_time_secs / total) * 100
             const waitPct = (row.wait_time_secs / total) * 100
@@ -162,7 +179,48 @@ function DialerPage() {
               </div>
             )
           })}
-          {data.rows.length === 0 && <p className="py-6 text-center text-xs text-muted">No ViciDial stats found for this range and user group.</p>}
+          {vici.rows.length === 0 && <p className="py-6 text-center text-xs text-muted">No ViciDial stats found for this range and user group.</p>}
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-2xl bg-card p-6 shadow-sm">
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="font-sora text-sm font-bold text-ink">INBOUND GROUP DROPS</h2>
+            <p className="text-xs text-muted">Live from ViciDial · {drops.from} → {drops.to} · DROP status</p>
+          </div>
+          <button className="rounded-full border border-ink/10 px-3 py-1 text-xs font-semibold text-ink hover:bg-ink/5">EXPORT</button>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-ink/10 text-muted">
+                <th className="pb-2 font-semibold">Inbound group</th>
+                <th className="pb-2 font-semibold text-right">Total calls</th>
+                <th className="pb-2 font-semibold text-right">Drops</th>
+                <th className="pb-2 font-semibold text-right">Drop rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {drops.rows.map((row) => {
+                const dropRate = row.total_calls > 0 ? (row.drop_calls / row.total_calls) * 100 : 0
+                return (
+                  <tr key={row.group} className="border-b border-ink/5 last:border-0">
+                    <td className="py-2 font-semibold text-ink">{row.group}</td>
+                    <td className="py-2 text-right text-muted">{row.total_calls}</td>
+                    <td className="py-2 text-right font-semibold text-accent">{row.drop_calls}</td>
+                    <td className="py-2 text-right text-muted">{dropRate.toFixed(1)}%</td>
+                  </tr>
+                )
+              })}
+              {drops.rows.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-6 text-center text-muted">No inbound group drop data found for this range.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

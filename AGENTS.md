@@ -44,3 +44,4 @@ Forth's Cloudflare WAF blocks unknown datacenter egress ranges. Before the live 
 - `server.mjs` was updated to use `@hono/node-server/serve-static` so the production preview correctly serves `dist/client` assets and styles.
 - The build, tests, and local parser verification pass; the SALES/DIALER pages and Overview cards should now load live data in the refreshed preview.
 - Campaign filtering remains unavailable because the current ViciDial response does not include campaign-level fields.
+- The DIALER page now pulls inbound-group drop counts from ViciDial's `call_status_stats` API (filtering `statuses=DROP`) and displays a per-inbound-group table with total calls, drops, and drop rate.

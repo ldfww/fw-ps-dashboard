@@ -17,6 +17,12 @@ export interface ViciDialRange {
   to: string
 }
 
+export interface ViciDialInboundDrop {
+  group: string
+  total_calls: number
+  drop_calls: number
+}
+
 function parseTimeToSeconds(value: string | undefined): number {
   if (!value) return 0
   const trimmed = value.trim()
@@ -217,4 +223,102 @@ export async function syncViciDialRange(
     results.push(...dayRows)
   }
   return results
+}
+
+function parseStatusBreakdown(statusField: string | undefined, targetStatus: string): number {
+  if (!statusField) return 0
+  const pairs = statusField.split(',').map((p) => p.trim())
+  let total = 0
+  for (const pair of pairs) {
+    const [status, count] = pair.split('-')
+    if (status?.trim().toUpperCase() === targetStatus.toUpperCase()) {
+      total += parseInteger(count)
+    }
+  }
+  return total
+}
+
+function parseCallStatusStats(text: string): ViciDialInboundDrop[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim())
+  if (lines.length === 0) return []
+
+  const isHeader = (line: string) =>
+    line.toLowerCase().includes('campaign') ||
+    line.toLowerCase().includes('ingroup') ||
+    line.toLowerCase().includes('total calls') ||
+    line.toLowerCase().includes('status breakdown')
+
+  const data = isHeader(lines[0]) ? lines.slice(1) : lines
+  const rows: ViciDialInboundDrop[] = []
+
+  for (const line of data) {
+    const parts = line.split('|')
+    if (parts.length < 5) continue
+
+    const group = parts[0].trim()
+    const totalCalls = parseInteger(parts[1])
+    const dropCalls = parseStatusBreakdown(parts[4], 'DROP')
+
+    if (!group) continue
+    rows.push({ group, total_calls: totalCalls, drop_calls: dropCalls })
+  }
+
+  return rows
+}
+
+export async function fetchInboundGroupDrops(date: string): Promise<ViciDialInboundDrop[]> {
+  const user = process.env.VICIDIAL_USER
+  const pass = process.env.VICIDIAL_PASS
+  if (!user || !pass) {
+    throw new Error('VICIDIAL_USER and VICIDIAL_PASS must be set')
+  }
+
+  const params = new URLSearchParams({
+    source: 'ops-dashboard',
+    function: 'call_status_stats',
+    user,
+    pass,
+    campaigns: '---ALL---',
+    query_date: date,
+    statuses: 'DROP',
+    stage: 'pipe',
+    header: 'YES',
+  })
+
+  const res = await fetch(`https://fws.phdialer.com/vicidial/non_agent_api.php?${params.toString()}`, {
+    method: 'GET',
+  })
+  if (!res.ok) {
+    throw new Error(`ViciDial call_status_stats request failed: ${res.status} ${await res.text().catch(() => '')}`)
+  }
+
+  const text = await res.text()
+  if (!text || text.toLowerCase().startsWith('error')) {
+    throw new Error(`ViciDial call_status_stats returned an error: ${text.slice(0, 200)}`)
+  }
+
+  return parseCallStatusStats(text)
+}
+
+export async function syncInboundGroupDropsRange(
+  from: string,
+  to: string,
+): Promise<ViciDialInboundDrop[]> {
+  const byGroup = new Map<string, ViciDialInboundDrop>()
+  const start = new Date(from)
+  const end = new Date(to)
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const date = d.toISOString().slice(0, 10)
+    const dayRows = await fetchInboundGroupDrops(date)
+    for (const row of dayRows) {
+      const current = byGroup.get(row.group)
+      if (!current) {
+        byGroup.set(row.group, { ...row })
+        continue
+      }
+      current.total_calls += row.total_calls
+      current.drop_calls += row.drop_calls
+    }
+  }
+  return Array.from(byGroup.values()).sort((a, b) => b.drop_calls - a.drop_calls || a.group.localeCompare(b.group))
 }
