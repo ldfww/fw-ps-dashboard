@@ -43,5 +43,6 @@ Forth's Cloudflare WAF blocks unknown datacenter egress ranges. Before the live 
 - The Google Sheets service-account credentials are configured locally and the `supabase/migrations/001_schema.sql` migration has been applied. The live `results` tab currently parses 17 agent rows + 1 total row and the total closing ratio matches the sheet at 49.27%.
 - `server.mjs` was updated to use `@hono/node-server/serve-static` so the production preview correctly serves `dist/client` assets and styles.
 - The build, tests, and local parser verification pass; the SALES/DIALER pages and Overview cards should now load live data in the refreshed preview.
+- The Overview page has a MASTER card that reads the `Results` tab of the Google Sheet configured in `GOOGLE_SHEETS_MASTER_SPREADSHEET_ID` and shows active clients, sales, and FP ratio for the latest date row.
 - Campaign filtering remains unavailable because the current ViciDial response does not include campaign-level fields.
 - The DIALER page now pulls inbound-group drop counts from ViciDial's `call_status_stats` API (filtering `statuses=DROP`) and displays a per-inbound-group table with total calls, drops, and drop rate; users can filter by ViciDial campaign using the `campaigns_list` API.

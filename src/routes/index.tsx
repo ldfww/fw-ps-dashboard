@@ -4,7 +4,7 @@ import { format, subDays } from 'date-fns'
 import { fetchGmailRange } from '~/lib/gmail'
 import { getSupabaseAdmin } from '~/lib/supabase'
 import { fetchViciDialStats } from '~/lib/vicidial'
-import { aggregateSalesClosingRecords, fetchSalesClosingRecords, type SalesClosingRecord } from '~/lib/sheets'
+import { aggregateSalesClosingRecords, fetchMasterMasterRecords, fetchSalesClosingRecords, type MasterMasterRecord, type SalesClosingRecord } from '~/lib/sheets'
 
 const getOverview = createServerFn({
   method: 'GET',
@@ -31,6 +31,15 @@ const getOverview = createServerFn({
     }
   }
   const sales = aggregateSalesClosingRecords(salesRecords)
+
+  let masterRecords: MasterMasterRecord[] = []
+  try {
+    masterRecords = await fetchMasterMasterRecords()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (!/not (?:set|configured)|must be set/i.test(message)) throw err
+  }
+  const latestMaster = masterRecords.sort((a, b) => b.date.localeCompare(a.date))[0] ?? null
 
   const [{ data: forthUsers, error: usersError }, dialerRows, emailCounts] = await Promise.all([
     admin.from('forth_users').select('id, role_name, active'),
@@ -91,6 +100,7 @@ const getOverview = createServerFn({
       cancelled: sales.total.cancelled_clients,
       white: sales.total.white_scheduled,
     },
+    master: latestMaster,
   }
 })
 
@@ -143,6 +153,16 @@ function Home() {
             { label: 'BOOKED', value: data.sales.booked },
             { label: 'PAID', value: data.sales.paid },
             { label: 'RATIO', value: `${data.sales.ratio.toFixed(2)}%` },
+          ]}
+        />
+        <SourceCard
+          to="/"
+          title="MASTER"
+          subtitle={data.master ? `Master Master · ${data.master.date}` : 'Master sheet not configured'}
+          metrics={[
+            { label: 'ACTIVE', value: data.master?.active_clients ?? 0 },
+            { label: 'SALES', value: data.master?.sales ?? 0 },
+            { label: 'FP RATIO', value: `${data.master?.fp_ratio.toFixed(2) ?? 0}%` },
           ]}
         />
       </div>

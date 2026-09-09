@@ -242,17 +242,20 @@ function DialerPage() {
               </tr>
             </thead>
             <tbody>
-              {drops.rows.map((row) => {
-                const dropRate = row.total_calls > 0 ? (row.drop_calls / row.total_calls) * 100 : 0
-                return (
-                  <tr key={row.group} className="border-b border-ink/5 last:border-0">
-                    <td className="py-2 font-semibold text-ink">{row.group}</td>
-                    <td className="py-2 text-right text-muted">{row.total_calls}</td>
-                    <td className="py-2 text-right font-semibold text-accent">{row.drop_calls}</td>
-                    <td className="py-2 text-right text-muted">{dropRate.toFixed(1)}%</td>
-                  </tr>
-                )
-              })}
+              {drops.rows
+                .slice()
+                .sort((a, b) => b.total_calls - a.total_calls)
+                .map((row) => {
+                  const dropRate = row.total_calls > 0 ? (row.drop_calls / row.total_calls) * 100 : 0
+                  return (
+                    <tr key={row.group} className="border-b border-ink/5 last:border-0">
+                      <td className="py-2 font-semibold text-ink">{row.group}</td>
+                      <td className="py-2 text-right text-muted">{row.total_calls}</td>
+                      <td className="py-2 text-right font-semibold text-accent">{row.drop_calls}</td>
+                      <td className="py-2 text-right text-muted">{dropRate.toFixed(1)}%</td>
+                    </tr>
+                  )
+                })}
               {drops.rows.length === 0 && (
                 <tr>
                   <td colSpan={4} className="py-6 text-center text-muted">No inbound group drop data found for this range.</td>

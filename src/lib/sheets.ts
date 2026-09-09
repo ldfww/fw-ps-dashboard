@@ -1,3 +1,4 @@
+import { format, parse } from 'date-fns'
 import { google } from 'googleapis'
 import { JWT } from 'google-auth-library'
 
@@ -5,6 +6,21 @@ export interface SheetTaskRow {
   agent_id: string
   log_date: string
   tasks_assigned: number
+}
+
+export interface MasterMasterRecord {
+  date: string
+  active_clients: number
+  reschedule: number
+  nsf_recurring: number
+  cancels: number
+  poc: number
+  paid_retention: number
+  sales: number
+  fp_paid: number
+  fp_nsf: number
+  fp_gray: number
+  fp_ratio: number
 }
 
 export interface SalesClosingRecord {
@@ -211,5 +227,67 @@ export function aggregateSalesClosingRecords(records: SalesClosingRecord[]) {
     },
     agents,
     dateRange: total?.date_range ?? agents[0]?.date_range ?? '',
+  }
+}
+
+function getMasterEnv() {
+  const clientEmail = process.env.GOOGLE_SHEETS_CLIENT_EMAIL
+  const privateKey = process.env.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  const spreadsheetId = process.env.GOOGLE_SHEETS_MASTER_SPREADSHEET_ID
+  if (!clientEmail || !privateKey || !spreadsheetId) {
+    throw new Error('GOOGLE_SHEETS_CLIENT_EMAIL, GOOGLE_SHEETS_PRIVATE_KEY and GOOGLE_SHEETS_MASTER_SPREADSHEET_ID must be set')
+  }
+  return { clientEmail, privateKey, spreadsheetId }
+}
+
+function parseMasterDate(value: unknown): string | null {
+  const s = String(value ?? '').trim()
+  if (!s) return null
+  try {
+    const d = parse(s, 'MMM d yyyy', new Date())
+    if (Number.isNaN(d.getTime())) return null
+    return format(d, 'yyyy-MM-dd')
+  } catch {
+    return null
+  }
+}
+
+export async function fetchMasterMasterRecords(): Promise<MasterMasterRecord[]> {
+  const { clientEmail, privateKey, spreadsheetId } = getMasterEnv()
+  const auth = createAuth(clientEmail, privateKey)
+  const sheets = google.sheets({ version: 'v4', auth })
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'Results!A1:L1000',
+    })
+    const rows = res.data.values
+    if (!rows || rows.length < 2) return []
+
+    const result: MasterMasterRecord[] = []
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i]
+      const date = parseMasterDate(row[0])
+      if (!date) continue
+      result.push({
+        date,
+        active_clients: parseNumber(row[1]),
+        reschedule: parseNumber(row[2]),
+        nsf_recurring: parseNumber(row[3]),
+        cancels: parseNumber(row[4]),
+        poc: parseNumber(row[5]),
+        paid_retention: parseNumber(row[6]),
+        sales: parseNumber(row[7]),
+        fp_paid: parseNumber(row[8]),
+        fp_nsf: parseNumber(row[9]),
+        fp_gray: parseNumber(row[10]),
+        fp_ratio: parseRatio(row[11]),
+      })
+    }
+    return result
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('Google Sheets master read failed:', message)
+    return []
   }
 }
