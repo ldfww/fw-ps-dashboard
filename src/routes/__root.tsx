@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   createRootRoute,
   HeadContent,
@@ -59,13 +59,14 @@ const navLinks = [
   { to: '/dialer', label: 'DIALER' },
   { to: '/crm', label: 'CRM' },
   { to: '/email', label: 'EMAIL' },
-  { to: '/spreadsheet', label: 'SALES' },
 ]
 
 function RootComponent() {
   const session = Route.useLoaderData()
   const router = useRouter()
   const location = useLocation()
+  const [reportsOpen, setReportsOpen] = useState(false)
+  const isReportsActive = location.pathname === '/spreadsheet'
 
   async function signOut() {
     const { getSupabaseClient } = await import('~/lib/auth')
@@ -112,6 +113,25 @@ function RootComponent() {
                 {link.label}
               </Link>
             ))}
+            <div
+              className="relative pb-3 hover:text-ink"
+              onMouseEnter={() => setReportsOpen(true)}
+              onMouseLeave={() => setReportsOpen(false)}
+            >
+              <span className={`block pb-3 ${isReportsActive ? 'text-ink' : ''}`}>REPORTS ▾</span>
+              {reportsOpen && (
+                <div className="absolute left-0 top-full z-10 w-56 rounded-b-2xl border border-ink/10 bg-paper py-2 shadow-sm">
+                  <Link
+                    to="/spreadsheet"
+                    activeOptions={{ exact: true }}
+                    activeProps={{ className: 'block px-4 py-2 text-ink bg-ink/5' }}
+                    className="block px-4 py-2 hover:bg-ink/5"
+                  >
+                    SALES CLOSING RATIO
+                  </Link>
+                </div>
+              )}
+            </div>
             {(session.role === 'manager' || session.role === 'admin') && (
               <>
                 <Link to="/alerts" className="pb-3 text-accent hover:text-ink">
