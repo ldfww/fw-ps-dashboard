@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import { differenceInCalendarDays, format, parseISO, subDays } from 'date-fns'
-import { syncInboundGroupDropsRange, syncViciDialRange, type ViciDialStatsRow } from '~/lib/vicidial'
+import { fetchCampaignsList, syncInboundGroupDropsRange, syncViciDialRange, type ViciDialCampaign, type ViciDialStatsRow } from '~/lib/vicidial'
 
 function today(): string {
   return format(new Date(), 'yyyy-MM-dd')
@@ -48,13 +48,18 @@ const getViciDial = createServerFn({ method: 'GET' })
   })
 
 const getInboundGroupDrops = createServerFn({ method: 'GET' })
-  .validator((input: { from: string; to: string }) => input)
+  .validator((input: { from: string; to: string; campaign: string }) => input)
   .handler(async ({ data }) => {
     const days = differenceInCalendarDays(parseISO(data.to), parseISO(data.from))
     if (days < 0 || days > 30) throw new Error('Dialer date range must be between 1 and 31 days')
-    const rows = await syncInboundGroupDropsRange(data.from, data.to)
-    return { from: data.from, to: data.to, rows }
+    const campaign = data.campaign === 'all' ? null : data.campaign
+    const rows = await syncInboundGroupDropsRange(data.from, data.to, campaign)
+    return { from: data.from, to: data.to, campaign: data.campaign, rows }
   })
+
+const getViciDialCampaigns = createServerFn({ method: 'GET' }).handler(async () => {
+  return await fetchCampaignsList()
+})
 
 export const Route = createFileRoute('/dialer')({
   validateSearch: (search: Record<string, unknown>) => {
@@ -63,16 +68,18 @@ export const Route = createFileRoute('/dialer')({
       from: isDate(search.from) ? search.from : to,
       to,
       group: typeof search.group === 'string' && search.group ? search.group : 'all',
+      campaign: typeof search.campaign === 'string' && search.campaign ? search.campaign : 'all',
     }
   },
   loaderDeps: ({ search }) => search,
   component: DialerPage,
   loader: async ({ deps }) => {
-    const [vici, drops] = await Promise.all([
+    const [vici, drops, campaigns] = await Promise.all([
       getViciDial({ data: deps }),
-      getInboundGroupDrops({ data: { from: deps.from, to: deps.to } }),
+      getInboundGroupDrops({ data: { from: deps.from, to: deps.to, campaign: deps.campaign } }),
+      getViciDialCampaigns(),
     ])
-    return { vici, drops }
+    return { vici, drops, campaigns }
   },
 })
 
@@ -80,6 +87,7 @@ function DialerPage() {
   const data = Route.useLoaderData()
   const vici = data.vici
   const drops = data.drops
+  const campaigns = data.campaigns
   const search = Route.useSearch()
   const navigate = useNavigate()
   const totalCalls = vici.rows.reduce((sum, row) => sum + row.calls, 0)
@@ -120,9 +128,10 @@ function DialerPage() {
           </select>
         </label>
         <label className="text-xs font-semibold text-muted">
-          <span className="mb-1 block">CAMPAIGN</span>
-          <select disabled className="rounded-lg border border-ink/10 bg-paper px-3 py-2 text-sm text-muted">
-            <option>All campaigns</option>
+          <span className="mb-1 block">INBOUND CAMPAIGN</span>
+          <select value={search.campaign} onChange={(event) => update({ campaign: event.target.value })} className="rounded-lg border border-ink/10 bg-paper px-3 py-2 text-sm text-ink">
+            <option value="all">All campaigns</option>
+            {campaigns.map((c) => <option key={c.campaign_id} value={c.campaign_id}>{c.campaign_id}</option>)}
           </select>
         </label>
       </div>
@@ -187,7 +196,7 @@ function DialerPage() {
         <div className="flex items-start justify-between">
           <div>
             <h2 className="font-sora text-sm font-bold text-ink">INBOUND GROUP DROPS</h2>
-            <p className="text-xs text-muted">Live from ViciDial · {drops.from} → {drops.to} · DROP status</p>
+            <p className="text-xs text-muted">Live from ViciDial · {drops.from} → {drops.to} · {search.campaign === 'all' ? 'All campaigns' : search.campaign} · DROP status</p>
           </div>
           <button className="rounded-full border border-ink/10 px-3 py-1 text-xs font-semibold text-ink hover:bg-ink/5">EXPORT</button>
         </div>

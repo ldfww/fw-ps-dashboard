@@ -23,6 +23,13 @@ export interface ViciDialInboundDrop {
   drop_calls: number
 }
 
+export interface ViciDialCampaign {
+  campaign_id: string
+  campaign_name: string
+  active: string
+  user_group: string
+}
+
 function parseTimeToSeconds(value: string | undefined): number {
   if (!value) return 0
   const trimmed = value.trim()
@@ -266,7 +273,56 @@ function parseCallStatusStats(text: string): ViciDialInboundDrop[] {
   return rows
 }
 
-export async function fetchInboundGroupDrops(date: string): Promise<ViciDialInboundDrop[]> {
+export async function fetchCampaignsList(): Promise<ViciDialCampaign[]> {
+  const user = process.env.VICIDIAL_USER
+  const pass = process.env.VICIDIAL_PASS
+  if (!user || !pass) {
+    throw new Error('VICIDIAL_USER and VICIDIAL_PASS must be set')
+  }
+
+  const params = new URLSearchParams({
+    source: 'ops-dashboard',
+    function: 'campaigns_list',
+    user,
+    pass,
+    stage: 'pipe',
+    header: 'YES',
+  })
+
+  const res = await fetch(`https://fws.phdialer.com/vicidial/non_agent_api.php?${params.toString()}`, {
+    method: 'GET',
+  })
+  if (!res.ok) {
+    throw new Error(`ViciDial campaigns_list request failed: ${res.status} ${await res.text().catch(() => '')}`)
+  }
+
+  const text = await res.text()
+  if (!text || text.toLowerCase().startsWith('error')) {
+    throw new Error(`ViciDial campaigns_list returned an error: ${text.slice(0, 200)}`)
+  }
+
+  const lines = text.split(/\r?\n/).filter((l) => l.trim())
+  const isHeader = lines[0]?.toLowerCase().includes('campaign_id')
+  const data = isHeader ? lines.slice(1) : lines
+
+  const rows: ViciDialCampaign[] = []
+  for (const line of data) {
+    const parts = line.split('|')
+    if (parts.length < 5) continue
+    rows.push({
+      campaign_id: parts[0].trim(),
+      campaign_name: parts[1].trim(),
+      active: parts[2].trim(),
+      user_group: parts[3].trim(),
+    })
+  }
+  return rows.sort((a, b) => a.campaign_id.localeCompare(b.campaign_id))
+}
+
+export async function fetchInboundGroupDrops(
+  date: string,
+  campaign: string | null,
+): Promise<ViciDialInboundDrop[]> {
   const user = process.env.VICIDIAL_USER
   const pass = process.env.VICIDIAL_PASS
   if (!user || !pass) {
@@ -278,7 +334,7 @@ export async function fetchInboundGroupDrops(date: string): Promise<ViciDialInbo
     function: 'call_status_stats',
     user,
     pass,
-    campaigns: '---ALL---',
+    campaigns: campaign ?? '---ALL---',
     query_date: date,
     statuses: 'DROP',
     stage: 'pipe',
@@ -303,13 +359,14 @@ export async function fetchInboundGroupDrops(date: string): Promise<ViciDialInbo
 export async function syncInboundGroupDropsRange(
   from: string,
   to: string,
+  campaign: string | null,
 ): Promise<ViciDialInboundDrop[]> {
   const byGroup = new Map<string, ViciDialInboundDrop>()
   const start = new Date(from)
   const end = new Date(to)
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const date = d.toISOString().slice(0, 10)
-    const dayRows = await fetchInboundGroupDrops(date)
+    const dayRows = await fetchInboundGroupDrops(date, campaign)
     for (const row of dayRows) {
       const current = byGroup.get(row.group)
       if (!current) {
