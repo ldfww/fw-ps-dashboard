@@ -246,6 +246,34 @@ function parseStatusBreakdown(statusField: string | undefined, targetStatus: str
   return total
 }
 
+const NON_ANSWERED_STATUSES = new Set([
+  'DROP',
+  'XDROP',
+  'B',
+  'BUSY',
+  'TIMEOT',
+  'TIMEOUT',
+  'TO',
+  'ABANDON',
+  'ABDN',
+  'NOANSWER',
+  'NOANS',
+  'NOANSW',
+])
+
+function parseNonAnsweredCount(statusField: string | undefined): number {
+  if (!statusField) return 0
+  const pairs = statusField.split(',').map((p) => p.trim())
+  let total = 0
+  for (const pair of pairs) {
+    const [status, count] = pair.split('-')
+    if (status?.trim().toUpperCase() && NON_ANSWERED_STATUSES.has(status.trim().toUpperCase())) {
+      total += parseInteger(count)
+    }
+  }
+  return total
+}
+
 function parseCallStatusStats(text: string): ViciDialInboundDrop[] {
   const lines = text.split(/\r?\n/).filter((l) => l.trim())
   if (lines.length === 0) return []
@@ -265,8 +293,9 @@ function parseCallStatusStats(text: string): ViciDialInboundDrop[] {
 
     const group = parts[0].trim()
     const totalCalls = parseInteger(parts[1])
-    const answeredCalls = parseInteger(parts[2])
+    const nonAnswered = parseNonAnsweredCount(parts[4])
     const dropCalls = parseStatusBreakdown(parts[4], 'DROP')
+    const answeredCalls = Math.max(0, totalCalls - nonAnswered)
 
     if (!group) continue
     rows.push({ group, total_calls: totalCalls, answered_calls: answeredCalls, drop_calls: dropCalls })
