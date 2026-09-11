@@ -237,7 +237,8 @@ function getMasterEnv() {
   if (!clientEmail || !privateKey || !spreadsheetId) {
     throw new Error('GOOGLE_SHEETS_CLIENT_EMAIL, GOOGLE_SHEETS_PRIVATE_KEY and GOOGLE_SHEETS_MASTER_SPREADSHEET_ID must be set')
   }
-  return { clientEmail, privateKey, spreadsheetId }
+  const range = process.env.GOOGLE_SHEETS_MASTER_RANGE?.trim() || 'Results!A1:L1000'
+  return { clientEmail, privateKey, spreadsheetId, range }
 }
 
 function parseMasterDate(value: unknown): string | null {
@@ -253,13 +254,13 @@ function parseMasterDate(value: unknown): string | null {
 }
 
 export async function fetchMasterMasterRecords(): Promise<MasterMasterRecord[]> {
-  const { clientEmail, privateKey, spreadsheetId } = getMasterEnv()
+  const { clientEmail, privateKey, spreadsheetId, range } = getMasterEnv()
   const auth = createAuth(clientEmail, privateKey)
   const sheets = google.sheets({ version: 'v4', auth })
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: 'Results!A1:L1000',
+      range,
     })
     const rows = res.data.values
     if (!rows || rows.length < 2) return []

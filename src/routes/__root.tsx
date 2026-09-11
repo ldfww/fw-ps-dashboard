@@ -66,7 +66,7 @@ function RootComponent() {
   const router = useRouter()
   const location = useLocation()
   const [reportsOpen, setReportsOpen] = useState(false)
-  const isReportsActive = location.pathname === '/spreadsheet'
+  const isReportsActive = location.pathname === '/spreadsheet' || location.pathname === '/master'
 
   async function signOut() {
     const { getSupabaseClient } = await import('~/lib/auth')
@@ -128,6 +128,14 @@ function RootComponent() {
                     className="block px-4 py-2 hover:bg-ink/5"
                   >
                     SALES CLOSING RATIO
+                  </Link>
+                  <Link
+                    to="/master"
+                    activeOptions={{ exact: true }}
+                    activeProps={{ className: 'block px-4 py-2 text-ink bg-ink/5' }}
+                    className="block px-4 py-2 hover:bg-ink/5"
+                  >
+                    MASTER MASTER
                   </Link>
                 </div>
               )}

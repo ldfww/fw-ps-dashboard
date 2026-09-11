@@ -297,7 +297,7 @@ function parseCallStatusStats(text: string): ViciDialInboundDrop[] {
     const dropCalls = parseStatusBreakdown(parts[4], 'DROP')
     const answeredCalls = Math.max(0, totalCalls - nonAnswered)
 
-    if (!group) continue
+    if (!group || group.toLowerCase() === 'main') continue
     rows.push({ group, total_calls: totalCalls, answered_calls: answeredCalls, drop_calls: dropCalls })
   }
 

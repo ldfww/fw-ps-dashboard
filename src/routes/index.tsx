@@ -156,7 +156,7 @@ function Home() {
           ]}
         />
         <SourceCard
-          to="/"
+          to="/master"
           title="MASTER"
           subtitle={data.master ? `Master Master · ${data.master.date}` : 'Master sheet not configured'}
           metrics={[
