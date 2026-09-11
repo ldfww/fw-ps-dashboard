@@ -40,6 +40,7 @@ export const Route = createRootRoute({
     if (path.startsWith('/api/')) return null
 
     const session = await getSession()
+    if (path === '/reset-password') return session
     if (path === '/login' || path === '/auth/callback') {
       if (session) throw redirect({ to: '/', replace: true })
       return null
