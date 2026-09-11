@@ -16,7 +16,7 @@ await build({
   outfile: `${compute}/index.mjs`,
   bundle: true,
   platform: 'node',
-  target: 'node20',
+  target: 'node22',
   format: 'esm',
   banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   minify: true,
@@ -59,7 +59,7 @@ const manifest = {
     { path: '/*', target: { kind: 'Compute', src: 'default' } },
   ],
   computeResources: [
-    { name: 'default', runtime: 'nodejs20.x', entrypoint: 'index.mjs' },
+    { name: 'default', runtime: 'nodejs22.x', entrypoint: 'index.mjs' },
   ],
   framework: { name: 'tanstack-start', version: '1.168.0' },
 }
