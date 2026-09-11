@@ -7,3 +7,4 @@ dist
 coverage
 src/routeTree.gen.ts
 supabase/.temp
+.amplify-hosting
