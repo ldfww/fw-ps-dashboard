@@ -23,6 +23,39 @@ export interface MasterMasterRecord {
   fp_ratio: number
 }
 
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+]
+
+export interface CancelMasterBucket {
+  bucket: string
+  request: number
+  poc: number
+  loss: number
+  paid_retained: number
+  retained_ratio: number
+}
+
+export interface CancelMasterRecord {
+  month: string
+  buckets: CancelMasterBucket[]
+  total: CancelMasterBucket
+}
+
+export interface NsfMasterCategory {
+  category: string
+  amount: number
+  count: number
+}
+
+export interface NsfMasterRecord {
+  month: string
+  categories: NsfMasterCategory[]
+  total_revenue_lost: number
+  total_revenue_recouped: number
+}
+
 export interface SalesClosingRecord {
   date_range: string
   start_date: string | null
@@ -289,6 +322,170 @@ export async function fetchMasterMasterRecords(): Promise<MasterMasterRecord[]> 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.warn('Google Sheets master read failed:', message)
+    return []
+  }
+}
+
+function getCancelEnv() {
+  const clientEmail = process.env.GOOGLE_SHEETS_CLIENT_EMAIL
+  const privateKey = process.env.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  const spreadsheetId = process.env.GOOGLE_SHEETS_CANCEL_SPREADSHEET_ID
+  if (!clientEmail || !privateKey || !spreadsheetId) {
+    throw new Error('GOOGLE_SHEETS_CLIENT_EMAIL, GOOGLE_SHEETS_PRIVATE_KEY and GOOGLE_SHEETS_CANCEL_SPREADSHEET_ID must be set')
+  }
+  const range = process.env.GOOGLE_SHEETS_CANCEL_RANGE?.trim() || 'Month over Month!A1:F400'
+  return { clientEmail, privateKey, spreadsheetId, range }
+}
+
+// The "Month over Month" tab is hand-built: a standalone year row (e.g. "2025"),
+// followed by repeating blocks of a month header row ("September","Request","POC",
+// "Loss(request-paid)","Paid/Retained","Retained ratio") and three data rows
+// ("Zero months", "1-99", "Total"), separated by blank rows.
+export async function fetchCancelMasterRecords(): Promise<CancelMasterRecord[]> {
+  const { clientEmail, privateKey, spreadsheetId, range } = getCancelEnv()
+  const auth = createAuth(clientEmail, privateKey)
+  const sheets = google.sheets({ version: 'v4', auth })
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range })
+    const rows = res.data.values
+    if (!rows || rows.length === 0) return []
+
+    let currentYear = String(new Date().getFullYear())
+    const records: CancelMasterRecord[] = []
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      const col0 = String(row[0] ?? '').trim()
+
+      if (/^(19|20)\d{2}$/.test(col0) && row.slice(1).every((c) => String(c ?? '').trim() === '')) {
+        currentYear = col0
+        continue
+      }
+
+      const monthPart = col0.split(/\s+/)[0]?.toLowerCase()
+      const isHeader = MONTH_NAMES.includes(monthPart)
+        && String(row[1] ?? '').trim().toLowerCase() === 'request'
+        && String(row[2] ?? '').trim().toLowerCase() === 'poc'
+      if (!isHeader) continue
+
+      const yearMatch = col0.match(/(\d{4})/)
+      const year = yearMatch ? yearMatch[1] : currentYear
+      const monthName = col0.replace(/\d{4}/, '').trim()
+
+      const buckets: CancelMasterBucket[] = []
+      for (let j = i + 1; j < Math.min(i + 6, rows.length); j++) {
+        const dataRow = rows[j]
+        const bucketLabel = String(dataRow[0] ?? '').trim()
+        if (!bucketLabel) continue
+        const bucketLower = bucketLabel.toLowerCase()
+        const nextMonthPart = bucketLower.split(/\s+/)[0]
+        if (MONTH_NAMES.includes(nextMonthPart) && String(dataRow[1] ?? '').trim().toLowerCase() === 'request') break
+        if (bucketLower === 'zero months' || bucketLower === '1-99' || bucketLower === 'total') {
+          buckets.push({
+            bucket: bucketLabel,
+            request: parseNumber(dataRow[1]),
+            poc: parseNumber(dataRow[2]),
+            loss: parseNumber(dataRow[3]),
+            paid_retained: parseNumber(dataRow[4]),
+            retained_ratio: parseRatio(dataRow[5]),
+          })
+        }
+        if (bucketLower === 'total') break
+      }
+
+      const total = buckets.find((b) => b.bucket.toLowerCase() === 'total')
+        ?? buckets[buckets.length - 1]
+        ?? { bucket: 'Total', request: 0, poc: 0, loss: 0, paid_retained: 0, retained_ratio: 0 }
+
+      records.push({ month: `${monthName} ${year}`, buckets, total })
+    }
+
+    return records
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('Google Sheets cancel master read failed:', message)
+    return []
+  }
+}
+
+function getNsfEnv() {
+  const clientEmail = process.env.GOOGLE_SHEETS_CLIENT_EMAIL
+  const privateKey = process.env.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  const spreadsheetId = process.env.GOOGLE_SHEETS_NSF_SPREADSHEET_ID
+  if (!clientEmail || !privateKey || !spreadsheetId) {
+    throw new Error('GOOGLE_SHEETS_CLIENT_EMAIL, GOOGLE_SHEETS_PRIVATE_KEY and GOOGLE_SHEETS_NSF_SPREADSHEET_ID must be set')
+  }
+  const range = process.env.GOOGLE_SHEETS_NSF_RANGE?.trim() || '2026 Month over month!A1:I400'
+  return { clientEmail, privateKey, spreadsheetId, range }
+}
+
+// The "Month over month" tab packs two months side by side per block: a header
+// row with month names in column A and F, four "Was NSF: is now" category rows,
+// then "Total revenue Lost for month" / "Total Revenue RECOUPED" rows, separated
+// by blank rows before the next month pair.
+export async function fetchNsfMasterRecords(): Promise<NsfMasterRecord[]> {
+  const { clientEmail, privateKey, spreadsheetId, range } = getNsfEnv()
+  const auth = createAuth(clientEmail, privateKey)
+  const sheets = google.sheets({ version: 'v4', auth })
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range })
+    const rows = res.data.values
+    if (!rows || rows.length === 0) return []
+
+    const tabName = range.split('!')[0]
+    const yearMatch = tabName.match(/(\d{4})/)
+    const year = yearMatch ? yearMatch[1] : String(new Date().getFullYear())
+
+    function extractBlock(block: unknown[][], monthLabel: string, startCol: number): NsfMasterRecord | null {
+      const categories: NsfMasterCategory[] = []
+      let totalLost = 0
+      let totalRecouped = 0
+      for (const r of block) {
+        const label = String(r[startCol] ?? '').trim().toLowerCase()
+        if (label === 'was nsf: is now') {
+          categories.push({
+            category: String(r[startCol + 1] ?? '').trim(),
+            amount: parseNumber(r[startCol + 2]),
+            count: parseNumber(r[startCol + 3]),
+          })
+        } else if (label.startsWith('total revenue lost')) {
+          totalLost = parseNumber(r[startCol + 1])
+        } else if (label.startsWith('total revenue recouped')) {
+          totalRecouped = parseNumber(r[startCol + 1])
+        }
+      }
+      if (categories.length === 0) return null
+      return { month: monthLabel, categories, total_revenue_lost: totalLost, total_revenue_recouped: totalRecouped }
+    }
+
+    const records: NsfMasterRecord[] = []
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      const col0 = String(row[0] ?? '').trim().toLowerCase()
+      if (!MONTH_NAMES.includes(col0)) continue
+
+      let end = rows.length
+      for (let k = i + 1; k < rows.length; k++) {
+        const nextCol0 = String(rows[k][0] ?? '').trim().toLowerCase()
+        if (MONTH_NAMES.includes(nextCol0)) { end = k; break }
+      }
+      const block = rows.slice(i + 1, end)
+
+      const leftLabel = String(row[0]).trim()
+      const left = extractBlock(block, `${leftLabel} ${year}`, 0)
+      if (left) records.push(left)
+
+      const rightLabel = String(row[5] ?? '').trim()
+      if (rightLabel) {
+        const right = extractBlock(block, `${rightLabel} ${year}`, 5)
+        if (right) records.push(right)
+      }
+    }
+
+    return records
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('Google Sheets NSF master read failed:', message)
     return []
   }
 }

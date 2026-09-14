@@ -19,6 +19,9 @@
 - `FORTH_API_KEY` (long-lived; `FORTH_CLIENT_ID` / `FORTH_CLIENT_SECRET` optional)
 - `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN`
 - `GOOGLE_SHEETS_CLIENT_EMAIL` / `GOOGLE_SHEETS_PRIVATE_KEY` / `GOOGLE_SHEETS_SPREADSHEET_ID`
+- `GOOGLE_SHEETS_MASTER_SPREADSHEET_ID` / `GOOGLE_SHEETS_MASTER_RANGE` (default `Results!A1:L1000`)
+- `GOOGLE_SHEETS_CANCEL_SPREADSHEET_ID` / `GOOGLE_SHEETS_CANCEL_RANGE` (default `Month over Month!A1:F400`)
+- `GOOGLE_SHEETS_NSF_SPREADSHEET_ID` / `GOOGLE_SHEETS_NSF_RANGE` (default `2026 Month over month!A1:I400` — the sheet names this tab after the year, so update the range each year)
 - `SYNC_SECRET` (shared secret for `POST /api/public/sync`)
 - `THRESHOLD_OVERDUE` (default 30)
 
@@ -46,3 +49,5 @@ Forth's Cloudflare WAF blocks unknown datacenter egress ranges. Before the live 
 - The Overview page has a MASTER card that reads the `Results` tab of the Google Sheet configured in `GOOGLE_SHEETS_MASTER_SPREADSHEET_ID` and shows active clients, sales, and FP ratio for the latest date row.
 - Campaign filtering remains unavailable because the current ViciDial response does not include campaign-level fields.
 - The DIALER page now pulls inbound-group drop counts from ViciDial's `call_status_stats` API (filtering `statuses=DROP`) and displays a per-inbound-group table with total calls, drops, and drop rate; users can filter by ViciDial campaign using the `campaigns_list` API.
+- Added `/cancel-master` and `/nsf-master` report pages under the REPORTS nav dropdown, reading from two additional Google Sheets. Both source sheets use hand-built "Month over Month" tabs (not simple header+rows tables), so `src/lib/sheets.ts` has custom parsers (`fetchCancelMasterRecords`, `fetchNsfMasterRecords`) that scan for repeating month blocks rather than a single header row. Cancel Master reads bucketed retention data (Zero months / 1-99 / Total per month); NSF Master reads two months per row-block (columns A-D and F-I) with PAID/NSF (Still)/Rescheduled/Cancelling categories plus total revenue lost/recouped. Neither persists to Supabase yet — both read live from the sheet, matching the existing Master Master pattern.
+- The Gmail refresh token needs periodic manual reconnection: the OAuth app is in Google "Testing" publishing status with a restricted scope (`gmail.readonly`), so Google forces refresh tokens to expire after ~7 days. A permanent fix would be either publishing/verifying the OAuth app in Google Cloud, or switching to a Workspace service account with domain-wide delegation (if `financialwarranty.com` is on Google Workspace) the same way the Sheets integration already works.
