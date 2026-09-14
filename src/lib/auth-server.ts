@@ -44,12 +44,17 @@ export const getSession = createServerFn({
   method: 'GET',
 }).handler(async (): Promise<SessionUser | null> => {
   const supabase = getServerSupabase()
-  const { data, error } = await supabase.auth.getUser()
-  if (error || !data?.user) {
+  let user
+  try {
+    const { data, error } = await supabase.auth.getUser()
+    if (error || !data?.user) {
+      return null
+    }
+    user = data.user
+  } catch {
     return null
   }
 
-  const user = data.user
   let role = 'agent'
   try {
     const admin = getSupabaseAdmin()
