@@ -128,44 +128,53 @@ async function fetchViciDialTimeDetail(
     file_download: '1',
   } as Record<string, string>)
 
-  const res = await fetch(
-    `https://fws.phdialer.com/vicidial/AST_agent_time_detail.php?${params.toString()}`,
-    {
-      headers: {
-        Authorization: 'Basic ' + btoa(`${user}:${pass}`),
+  try {
+    const res = await fetch(
+      `https://fws.phdialer.com/vicidial/AST_agent_time_detail.php?${params.toString()}`,
+      {
+        headers: {
+          Authorization: 'Basic ' + btoa(`${user}:${pass}`),
+        },
       },
-    },
-  )
-  if (!res.ok) {
-    console.warn(`ViciDial time detail request failed: ${res.status}`)
+    )
+    if (!res.ok) {
+      console.warn(`ViciDial time detail request failed: ${res.status}`)
+      return new Map()
+    }
+
+    const text = await res.text()
+    const lines = text.split(/\r?\n/)
+    const headerIdx = lines.findIndex((line) => line.trim().startsWith('USER,'))
+    if (headerIdx === -1) {
+      console.warn('ViciDial time detail response had no USER, header row:', text.slice(0, 200))
+      return new Map()
+    }
+
+    const headers = lines[headerIdx].split(',').map((h) => h.trim().toLowerCase())
+    const userIdx = headers.indexOf('user')
+    const breakIdx = headers.indexOf('break')
+    const lunchIdx = headers.indexOf('lunch')
+
+    const result = new Map<string, PauseCodeTimes>()
+    for (let i = headerIdx + 1; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+      const parts = line.split(',')
+      if (userIdx === -1 || parts.length <= userIdx) continue
+      const key = parts[userIdx].trim().toLowerCase()
+      const breakTime = breakIdx >= 0 ? parts[breakIdx] : undefined
+      const lunchTime = lunchIdx >= 0 ? parts[lunchIdx] : undefined
+      result.set(key, {
+        break_time_secs: parseTimeToSeconds(breakTime),
+        lunch_time_secs: parseTimeToSeconds(lunchTime),
+      })
+    }
+    return result
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('ViciDial time detail request threw:', message)
     return new Map()
   }
-
-  const text = await res.text()
-  const lines = text.split(/\r?\n/)
-  const headerIdx = lines.findIndex((line) => line.trim().startsWith('USER,'))
-  if (headerIdx === -1) return new Map()
-
-  const headers = lines[headerIdx].split(',').map((h) => h.trim().toLowerCase())
-  const userIdx = headers.indexOf('user')
-  const breakIdx = headers.indexOf('break')
-  const lunchIdx = headers.indexOf('lunch')
-
-  const result = new Map<string, PauseCodeTimes>()
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (!line) continue
-    const parts = line.split(',')
-    if (userIdx === -1 || parts.length <= userIdx) continue
-    const key = parts[userIdx].trim().toLowerCase()
-    const breakTime = breakIdx >= 0 ? parts[breakIdx] : undefined
-    const lunchTime = lunchIdx >= 0 ? parts[lunchIdx] : undefined
-    result.set(key, {
-      break_time_secs: parseTimeToSeconds(breakTime),
-      lunch_time_secs: parseTimeToSeconds(lunchTime),
-    })
-  }
-  return result
 }
 
 export async function fetchViciDialStats(
