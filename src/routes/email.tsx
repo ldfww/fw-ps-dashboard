@@ -17,10 +17,15 @@ const getGmail = createServerFn({ method: 'GET' })
   .validator((input: { from: string; to: string }) => input)
   .handler(async ({ data }) => {
     if (!process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET || !process.env.GMAIL_REFRESH_TOKEN) {
-      return { from: data.from, to: data.to, mailbox, configured: false, counts: [] }
+      return { from: data.from, to: data.to, mailbox, configured: false, counts: [], error: null }
     }
-    const counts = await fetchGmailRange(data.from, data.to)
-    return { from: data.from, to: data.to, mailbox, configured: true, counts }
+    try {
+      const counts = await fetchGmailRange(data.from, data.to)
+      return { from: data.from, to: data.to, mailbox, configured: true, counts, error: null }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { from: data.from, to: data.to, mailbox, configured: true, counts: [], error: message }
+    }
   })
 
 export const Route = createFileRoute('/email')({
@@ -94,6 +99,12 @@ function EmailPage() {
             <div className="py-12 text-center">
               <p className="text-sm font-semibold text-ink">Gmail connection is not configured.</p>
               <p className="mt-1 text-xs text-muted">Add OAuth credentials for {mailbox} to load mailbox counts.</p>
+            </div>
+          ) : data.error ? (
+            <div className="py-12 text-center">
+              <p className="text-sm font-semibold text-ink">Gmail connection failed.</p>
+              <p className="mt-1 text-xs text-muted">The Gmail refresh token is likely expired or revoked and needs to be regenerated.</p>
+              <p className="mt-2 text-xs text-muted/70">{data.error}</p>
             </div>
           ) : (
             <div className="mt-4 space-y-4">
