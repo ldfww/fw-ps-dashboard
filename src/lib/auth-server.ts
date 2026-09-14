@@ -24,6 +24,11 @@ function getServerSupabase() {
   const cookieHeader = getRequestHeader('cookie') ?? ''
 
   return createServerClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+    },
     cookies: {
       getAll() {
         return parseCookieHeader(cookieHeader)
@@ -43,33 +48,31 @@ function getServerSupabase() {
 export const getSession = createServerFn({
   method: 'GET',
 }).handler(async (): Promise<SessionUser | null> => {
-  let supabase
-  let user
   try {
-    supabase = getServerSupabase()
-    const { data, error } = await supabase.auth.getUser()
-    if (error || !data?.user) {
+    const supabase = getServerSupabase()
+    const { data, error } = await supabase.auth.getSession()
+    if (error || !data?.session?.user) {
       return null
     }
-    user = data.user
+
+    const user = data.session.user
+    let role = 'agent'
+    try {
+      const admin = getSupabaseAdmin()
+      const { data: roleRow } = await admin
+        .from('user_roles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+      if (roleRow?.role) role = roleRow.role
+    } catch {
+      // leave default role
+    }
+
+    return { id: user.id, email: user.email, role }
   } catch {
     return null
   }
-
-  let role = 'agent'
-  try {
-    const admin = getSupabaseAdmin()
-    const { data: roleRow } = await admin
-      .from('user_roles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-    if (roleRow?.role) role = roleRow.role
-  } catch {
-    // leave default role
-  }
-
-  return { id: user.id, email: user.email, role }
 })
 
 export const requireRole = (role: string) =>
