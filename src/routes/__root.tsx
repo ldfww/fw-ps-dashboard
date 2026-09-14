@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import {
   createRootRoute,
   HeadContent,
+  isRedirect,
   Link,
   Outlet,
   redirect,
@@ -36,21 +37,26 @@ export const Route = createRootRoute({
     ],
   }),
   loader: async ({ location }) => {
-    const path = location.pathname
-    if (path.startsWith('/api/')) return null
+    try {
+      const path = location.pathname
+      if (path.startsWith('/api/')) return null
 
-    const session = await getSession()
-    if (path === '/reset-password') return session
-    if (path === '/login' || path === '/auth/callback') {
-      if (session) throw redirect({ to: '/', replace: true })
-      return null
-    }
+      const session = await getSession()
+      if (path === '/reset-password') return session
+      if (path === '/login' || path === '/auth/callback') {
+        if (session) throw redirect({ to: '/', replace: true })
+        return null
+      }
 
-    if (!session) {
+      if (!session) {
+        throw redirect({ to: '/login', search: { redirect: location.href }, replace: true })
+      }
+
+      return session
+    } catch (err) {
+      if (isRedirect(err)) throw err
       throw redirect({ to: '/login', search: { redirect: location.href }, replace: true })
     }
-
-    return session
   },
   component: RootComponent,
 })

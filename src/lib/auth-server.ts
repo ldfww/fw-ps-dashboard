@@ -43,9 +43,10 @@ function getServerSupabase() {
 export const getSession = createServerFn({
   method: 'GET',
 }).handler(async (): Promise<SessionUser | null> => {
-  const supabase = getServerSupabase()
+  let supabase
   let user
   try {
+    supabase = getServerSupabase()
     const { data, error } = await supabase.auth.getUser()
     if (error || !data?.user) {
       return null
