@@ -43,8 +43,8 @@ const getOverview = createServerFn({
 
   const [{ data: forthUsers, error: usersError }, dialerRows, emailCounts] = await Promise.all([
     admin.from('forth_users').select('id, role_name, active'),
-    fetchViciDialStats(date, null),
-    fetchGmailRange(emailFrom, date),
+    fetchViciDialStats(date, null).catch(() => [] as Awaited<ReturnType<typeof fetchViciDialStats>>),
+    fetchGmailRange(emailFrom, date).catch(() => [] as Awaited<ReturnType<typeof fetchGmailRange>>),
   ])
   if (usersError) throw new Error(`Failed to load Forth users: ${usersError.message}`)
 
