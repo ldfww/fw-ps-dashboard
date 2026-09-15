@@ -109,14 +109,19 @@ interface PauseCodeTimes {
   lunch_time_secs: number
 }
 
+interface PauseCodeResult {
+  times: Map<string, PauseCodeTimes>
+  error: string | null
+}
+
 async function fetchViciDialTimeDetail(
   from: string,
   to: string,
   userGroup: string | null,
-): Promise<Map<string, PauseCodeTimes>> {
+): Promise<PauseCodeResult> {
   const user = process.env.VICIDIAL_USER
   const pass = process.env.VICIDIAL_PASS
-  if (!user || !pass) return new Map()
+  if (!user || !pass) return { times: new Map(), error: 'VICIDIAL_USER and VICIDIAL_PASS must be set' }
 
   const params = new URLSearchParams({
     DB: '0',
@@ -138,16 +143,19 @@ async function fetchViciDialTimeDetail(
       },
     )
     if (!res.ok) {
-      console.warn(`ViciDial time detail request failed: ${res.status}`)
-      return new Map()
+      const body = await res.text().catch(() => '')
+      const error = `ViciDial time detail request failed: HTTP ${res.status} ${body.slice(0, 200)}`
+      console.warn(error)
+      return { times: new Map(), error }
     }
 
     const text = await res.text()
     const lines = text.split(/\r?\n/)
     const headerIdx = lines.findIndex((line) => line.trim().startsWith('USER,'))
     if (headerIdx === -1) {
-      console.warn('ViciDial time detail response had no USER, header row:', text.slice(0, 200))
-      return new Map()
+      const error = `ViciDial time detail response had no USER, header row: ${text.slice(0, 200)}`
+      console.warn(error)
+      return { times: new Map(), error }
     }
 
     const headers = lines[headerIdx].split(',').map((h) => h.trim().toLowerCase())
@@ -169,17 +177,19 @@ async function fetchViciDialTimeDetail(
         lunch_time_secs: parseTimeToSeconds(lunchTime),
       })
     }
-    return result
+    return { times: result, error: null }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.warn('ViciDial time detail request threw:', message)
-    return new Map()
+    const error = `ViciDial time detail request threw: ${message}`
+    console.warn(error)
+    return { times: new Map(), error }
   }
 }
 
 export async function fetchViciDialStats(
   date: string,
   userGroup: string | null,
+  onPauseCodeError?: (error: string) => void,
 ): Promise<ViciDialStatsRow[]> {
   const user = process.env.VICIDIAL_USER
   const pass = process.env.VICIDIAL_PASS
@@ -217,7 +227,8 @@ export async function fetchViciDialStats(
   }
 
   const rows = parsePipeBody(text, date)
-  const pauseTimes = await fetchViciDialTimeDetail(date, date, userGroup)
+  const { times: pauseTimes, error: pauseCodeError } = await fetchViciDialTimeDetail(date, date, userGroup)
+  if (pauseCodeError && onPauseCodeError) onPauseCodeError(pauseCodeError)
   for (const row of rows) {
     const extra = pauseTimes.get(row.agent_name.toLowerCase()) ?? pauseTimes.get(row.agent_id.toLowerCase())
     row.break_time_secs = extra?.break_time_secs ?? 0
@@ -230,16 +241,17 @@ export async function syncViciDialRange(
   from: string,
   to: string,
   userGroup: string | null,
-): Promise<ViciDialStatsRow[]> {
+): Promise<{ rows: ViciDialStatsRow[]; pauseCodeErrors: string[] }> {
   const results: ViciDialStatsRow[] = []
+  const errors = new Set<string>()
   const start = new Date(from)
   const end = new Date(to)
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const date = d.toISOString().slice(0, 10)
-    const dayRows = await fetchViciDialStats(date, userGroup)
+    const dayRows = await fetchViciDialStats(date, userGroup, (error) => errors.add(error))
     results.push(...dayRows)
   }
-  return results
+  return { rows: results, pauseCodeErrors: Array.from(errors) }
 }
 
 function parseStatusBreakdown(statusField: string | undefined, targetStatus: string): number {

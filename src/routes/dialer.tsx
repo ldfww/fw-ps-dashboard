@@ -61,10 +61,10 @@ const getViciDial = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     const days = differenceInCalendarDays(parseISO(data.to), parseISO(data.from))
     if (days < 0 || days > 30) throw new Error('Dialer date range must be between 1 and 31 days')
-    const allRows = await syncViciDialRange(data.from, data.to, null)
+    const { rows: allRows, pauseCodeErrors } = await syncViciDialRange(data.from, data.to, null)
     const groups = Array.from(new Set(allRows.map((row) => row.user_group).filter(Boolean))).sort()
     const filtered = data.group === 'all' ? allRows : allRows.filter((row) => row.user_group === data.group)
-    return { from: data.from, to: data.to, group: data.group, groups, rows: aggregateRows(filtered) }
+    return { from: data.from, to: data.to, group: data.group, groups, rows: aggregateRows(filtered), pauseCodeErrors }
   })
 
 const getInboundGroupDrops = createServerFn({ method: 'GET' })
@@ -157,6 +157,15 @@ function DialerPage() {
           </select>
         </label>
       </div>
+
+      {vici.pauseCodeErrors.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <p className="font-semibold">Break/Lunch data unavailable</p>
+          {vici.pauseCodeErrors.map((error) => (
+            <p key={error} className="mt-1 text-xs">{error}</p>
+          ))}
+        </div>
+      )}
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-9">
         <KpiBox label="AGENTS" value={vici.rows.length} />
