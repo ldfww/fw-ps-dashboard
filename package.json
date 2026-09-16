@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:amplify": "node scripts/prepare-amplify.mjs",
     "start": "node server.mjs",
+    "sync": "tsx scripts/run-sync.ts",
     "test": "vitest",
     "test:coverage": "vitest --coverage"
   },
