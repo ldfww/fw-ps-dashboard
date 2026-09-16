@@ -64,9 +64,13 @@ async function snapshotForth(date: string): Promise<{ rows: SnapshotRow[]; repor
   }
 
   if (allTasks.length > 0) {
+    // forth_tasks.id is the primary key (a task can only belong to one user at a time
+    // in Forth), so dedupe by id before upserting in case a reassigned task was pulled
+    // under more than one user during this run.
+    const byId = new Map(allTasks.map((t) => [t.id, t]))
     const { error } = await admin
       .from('forth_tasks')
-      .upsert(allTasks.map(mapForthTaskToDb), { onConflict: 'id, user_id' })
+      .upsert(Array.from(byId.values()).map(mapForthTaskToDb), { onConflict: 'id' })
     if (error) throw new Error(`forth_tasks upsert failed: ${error.message}`)
   }
 
