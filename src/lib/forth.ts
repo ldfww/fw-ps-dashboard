@@ -1,4 +1,4 @@
-import { format } from 'date-fns'
+import { format, subDays } from 'date-fns'
 
 const FORTH_BASE = 'https://api.forthcrm.com/v1'
 const PAGE_LIMIT = 500
@@ -174,11 +174,12 @@ async function fetchTasksPage(
   start: number,
   baseUrl: string,
   signal: AbortSignal,
+  limit = PAGE_LIMIT,
 ): Promise<{ tasks: ForthTask[]; status: number }> {
   const body = new URLSearchParams({
     completed: String(completed),
     start: String(start),
-    limit: String(PAGE_LIMIT),
+    limit: String(limit),
   }).toString()
 
   const res = await safeFetch(
@@ -314,6 +315,166 @@ export async function pullForthTasks(
           continue
         }
         const retried = await pullUser(apiKey, user, baseUrl, deadlineController)
+        if (retried.failed) {
+          failed.push({ userId: retried.userId, reason: retried.failed })
+        } else {
+          tasksByUser.set(retried.userId, retried.tasks)
+        }
+      }
+    }
+
+    if (failed.length > 0) {
+      throw new Error(`ForthCRM report incomplete. Failed users: ${failed.map((f) => `${f.userId} (${f.reason})`).join('; ')}`)
+    }
+
+    const allTasks: ForthTask[] = []
+    for (const [, tasks] of tasksByUser) allTasks.push(...tasks)
+    return { users, allTasks, failed: [] }
+  } finally {
+    clearTimeout(deadline)
+  }
+}
+
+async function fetchCompletedCount(
+  apiKey: string,
+  userId: string,
+  baseUrl: string,
+  signal: AbortSignal,
+): Promise<number> {
+  let lo = -1
+  let hi = 0
+  let step = 1
+
+  // Exponential search for an empty upper bound
+  while (hi < 1_000_000) {
+    const p = await fetchTasksPage(apiKey, userId, 1, hi, baseUrl, signal, 1)
+    if (p.status === 404 || p.tasks.length === 0) break
+    lo = hi
+    hi = step
+    step *= 2
+  }
+
+  if (lo === -1) return 0
+
+  // Binary search for the last non-empty offset
+  while (lo + 1 < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    const p = await fetchTasksPage(apiKey, userId, 1, mid, baseUrl, signal, 1)
+    if (p.status === 404 || p.tasks.length === 0) {
+      hi = mid
+    } else {
+      lo = mid
+    }
+  }
+
+  return lo + 1
+}
+
+async function fetchRecentCompleted(
+  apiKey: string,
+  userId: string,
+  since: string,
+  baseUrl: string,
+  deadlineController: AbortController,
+): Promise<ForthTask[]> {
+  const signal = requestSignal(deadlineController)
+  const total = await fetchCompletedCount(apiKey, userId, baseUrl, signal)
+  if (total === 0) return []
+
+  const all: ForthTask[] = []
+  let currentStart = Math.max(0, total - PAGE_LIMIT)
+
+  while (true) {
+    const p = await fetchTasksPage(apiKey, userId, 1, currentStart, baseUrl, signal, PAGE_LIMIT)
+    if (p.status === 404 || p.tasks.length === 0) break
+    const last = p.tasks[p.tasks.length - 1]
+    if (last && last.task_completed_date && last.task_completed_date < since) break
+    all.unshift(...p.tasks)
+    if (currentStart === 0) break
+    currentStart = Math.max(0, currentStart - PAGE_LIMIT)
+  }
+
+  return all
+}
+
+async function pullUserIncremental(
+  apiKey: string,
+  user: ForthUser,
+  since: string,
+  baseUrl: string,
+  deadlineController: AbortController,
+): Promise<UserPullResult> {
+  try {
+    const [open, recentDone] = await Promise.all([
+      fetchAllTasksForFilter(apiKey, user.id, 0, baseUrl, deadlineController),
+      fetchRecentCompleted(apiKey, user.id, since, baseUrl, deadlineController),
+    ])
+
+    const merged = new Map<string, ForthTask>()
+    for (const t of open) merged.set(t.id, t)
+    for (const t of recentDone) {
+      const existing = merged.get(t.id)
+      if (!existing) {
+        merged.set(t.id, t)
+      } else {
+        const recordCompleted = t.task_completed || existing.task_completed
+        const recordCompletedDate = t.task_completed_date ?? existing.task_completed_date
+        merged.set(t.id, {
+          ...existing,
+          firstname: t.firstname ?? existing.firstname,
+          lastname: t.lastname ?? existing.lastname,
+          task_completed: recordCompleted,
+          task_completed_date: recordCompletedDate,
+        })
+      }
+    }
+    return { userId: user.id, user, tasks: Array.from(merged.values()) }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { userId: user.id, user, tasks: [], failed: message }
+  }
+}
+
+export async function pullForthTasksIncremental(
+  apiKey: string,
+  lookbackDays = 2,
+  baseUrl = FORTH_BASE,
+): Promise<{ users: ForthUser[]; allTasks: ForthTask[]; failed: { userId: string; reason: string }[] }> {
+  const since = format(subDays(new Date(), lookbackDays), 'yyyy-MM-dd')
+  const deadlineController = new AbortController()
+  const deadline = setTimeout(() => deadlineController.abort(), DEADLINE_MS)
+  const BATCH = 10
+
+  try {
+    const users = await fetchForthUsers(apiKey, baseUrl, deadlineController)
+    const tasksByUser = new Map<string, ForthTask[]>()
+    const failed: { userId: string; reason: string }[] = []
+
+    for (let i = 0; i < users.length; i += BATCH) {
+      const batch = users.slice(i, i + BATCH)
+      const results = await Promise.all(
+        batch.map((u) => pullUserIncremental(apiKey, u, since, baseUrl, deadlineController)),
+      )
+      for (const r of results) {
+        if (r.failed) {
+          failed.push({ userId: r.userId, reason: r.failed })
+        } else {
+          tasksByUser.set(r.userId, r.tasks)
+        }
+      }
+    }
+
+    if (failed.length > 0) {
+      // One sequential retry pass for failed users
+      const toRetry = [...failed]
+      failed.length = 0
+      for (const u of toRetry) {
+        const user = users.find((x) => x.id === u.userId)
+        if (!user) {
+          failed.push({ userId: u.userId, reason: 'User not found during retry' })
+          continue
+        }
+        const retried = await pullUserIncremental(apiKey, user, since, baseUrl, deadlineController)
         if (retried.failed) {
           failed.push({ userId: retried.userId, reason: retried.failed })
         } else {

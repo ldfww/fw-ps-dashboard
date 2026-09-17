@@ -1,6 +1,6 @@
 import { format } from 'date-fns'
 import { fetchViciDialStats } from './vicidial'
-import { computeForthReport, pullForthTasks, today } from './forth'
+import { computeForthReport, pullForthTasks, pullForthTasksIncremental, today } from './forth'
 import { fetchGmailCountsForDay } from './gmail'
 import { fetchSheetTasks, fetchSalesClosingRecords, type SalesClosingRecord } from './sheets'
 import { getSupabaseAdmin } from './supabase'
@@ -43,10 +43,15 @@ function mapForthTaskToDb(t: { id: string; userId: string; firstname?: string; l
   }
 }
 
-async function snapshotForth(date: string): Promise<{ rows: SnapshotRow[]; report: ReturnType<typeof computeForthReport> }> {
+async function snapshotForth(
+  date: string,
+  incremental = false,
+): Promise<{ rows: SnapshotRow[]; report: ReturnType<typeof computeForthReport> }> {
   const apiKey = process.env.FORTH_API_KEY
   if (!apiKey) throw new Error('FORTH_API_KEY is not configured')
-  const { users, allTasks } = await pullForthTasks(apiKey)
+  const { users, allTasks } = incremental
+    ? await pullForthTasksIncremental(apiKey)
+    : await pullForthTasks(apiKey)
 
   const admin = getSupabaseAdmin()
   if (users.length > 0) {
@@ -198,4 +203,34 @@ export async function syncAll(
     sheets: sheets.snapshot.length,
     sales: sheets.sales.length,
   }
+}
+
+export async function syncQuick(date = today()): Promise<{ forth: number }> {
+  const apiKey = process.env.FORTH_API_KEY
+  if (!apiKey) throw new Error('FORTH_API_KEY is not configured')
+  const { rows, report } = await snapshotForth(date, true)
+
+  const admin = getSupabaseAdmin()
+  if (rows.length > 0) {
+    const { error } = await admin
+      .from('report_snapshots')
+      .upsert(rows, { onConflict: 'snapshot_date, source, agent_id, metric' })
+    if (error) throw new Error(`Snapshot upsert failed: ${error.message}`)
+  }
+
+  const overdueThreshold = Number(process.env.THRESHOLD_OVERDUE) || 30
+  const alertRows = report
+    .filter((r) => r.overdue > overdueThreshold)
+    .map((r) => ({
+      agent_id: `${r.firstname ?? ''} ${r.lastname ?? ''}`.trim() || r.userId,
+      source: 'forth',
+      metric: 'overdue',
+      threshold: overdueThreshold,
+      observed: r.overdue,
+    }))
+  if (alertRows.length > 0) {
+    await insertAlerts(alertRows)
+  }
+
+  return { forth: rows.length }
 }
